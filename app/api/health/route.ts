@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { DEMO_MODE } from "@/lib/demo-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,8 @@ export async function GET() {
     // Without SESSION_SECRET the app derives a key from DATABASE_URL (see lib/auth.ts), so sign-in still works.
     sessionSecretDerived: !process.env.SESSION_SECRET && Boolean(process.env.DATABASE_URL),
     database: "ok" as DatabaseState,
-    hasUsers: false
+    hasUsers: false,
+    demoMode: DEMO_MODE
   };
 
   if (!checks.databaseUrlSet) {

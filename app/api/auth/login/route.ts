@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { createSessionToken, verifyPassword, SESSION_COOKIE, SESSION_TTL_SECONDS, DUMMY_PASSWORD_HASH, ensureDemoAccounts, normalizeEmail } from "@/lib/auth";
 import { DEMO_ACCOUNTS } from "@/lib/demo-accounts";
+import { DEMO_MODE } from "@/lib/demo-mode";
 import { landingPathForRole } from "@/components/shell/module-nav";
 
 export async function POST(request: Request) {
@@ -17,14 +18,16 @@ export async function POST(request: Request) {
   }
 
   const normalizedEmail = normalizeEmail(body.email);
+  // Demo accounts self-heal locally and on deployments marked as demos; never on a real production deployment.
+  const allowDemoAccounts = process.env.NODE_ENV !== "production" || DEMO_MODE;
   try {
     const isDemoAccount = DEMO_ACCOUNTS.some((account) => account.email === normalizedEmail);
-    if (process.env.NODE_ENV !== "production" && isDemoAccount) {
+    if (allowDemoAccounts && isDemoAccount) {
       await ensureDemoAccounts();
     }
     let user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
 
-    if (!user && process.env.NODE_ENV !== "production") {
+    if (!user && allowDemoAccounts && isDemoAccount) {
       await ensureDemoAccounts();
       user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     }
