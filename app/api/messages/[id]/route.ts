@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { errorResponse } from "@/lib/api-error";
 import { conversationForUser, markRead } from "@/lib/messaging-server";
+import { decryptMessage, encryptText } from "@/lib/message-crypto";
 
 const RECORD_TYPES = ["opportunity", "invoice", "customer", "lead"] as const;
 
@@ -38,7 +39,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       select: messageSelect
     });
     await markRead(id, user.id);
-    return NextResponse.json({ messages: messages.reverse() });
+    return NextResponse.json({ messages: messages.reverse().map(decryptMessage) });
   } catch (error) {
     return errorResponse(error);
   }
@@ -52,7 +53,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const conversation = await conversationForUser(id, user);
     const input = sendSchema.parse(await request.json());
     const message = await prisma.message.create({
-      data: { conversationId: id, authorId: user.id, body: input.body, recordType: input.record?.type, recordId: input.record?.id, recordLabel: input.record?.label },
+      data: { conversationId: id, authorId: user.id, body: encryptText(input.body), recordType: input.record?.type, recordId: input.record?.id, recordLabel: encryptText(input.record?.label) },
       select: messageSelect
     });
     await prisma.conversation.update({ where: { id }, data: { lastMessageAt: message.createdAt } });
@@ -61,11 +62,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const recipient = conversation.participants.find((participant) => participant.userId !== user.id);
       if (recipient) {
         await prisma.notification.create({
-          data: { userId: recipient.userId, title: `New message from ${user.name}`, message: input.body.slice(0, 140), type: "MESSAGE", entityType: "conversation", entityId: id }
+          data: { userId: recipient.userId, title: `New message from ${user.name}`, message: "Open Messages to read it.", type: "MESSAGE", entityType: "conversation", entityId: id }
         });
       }
     }
-    return NextResponse.json({ message }, { status: 201 });
+    return NextResponse.json({ message: decryptMessage(message) }, { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError, errorResponse } from "@/lib/api-error";
 import { canAccessTeam, canBroadcast, teamConversationKey } from "@/lib/messaging";
 import { ensureTeamConversations, markRead } from "@/lib/messaging-server";
+import { encryptText } from "@/lib/message-crypto";
 
 /** Leaders post the same message to several team channels at once. */
 export async function POST(request: Request) {
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
     const conversations = await prisma.conversation.findMany({ where: { key: { in: teams.map(teamConversationKey) } }, select: { id: true } });
     const now = new Date();
     for (const conversation of conversations) {
-      await prisma.message.create({ data: { conversationId: conversation.id, authorId: user.id, body: input.body, createdAt: now } });
+      await prisma.message.create({ data: { conversationId: conversation.id, authorId: user.id, body: encryptText(input.body), createdAt: now } });
       await prisma.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: now } });
       await markRead(conversation.id, user.id, now);
     }

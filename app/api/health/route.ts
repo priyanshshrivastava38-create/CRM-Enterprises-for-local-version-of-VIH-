@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { DEMO_MODE } from "@/lib/demo-mode";
+import { messageEncryptionEnabled } from "@/lib/message-crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,7 @@ export async function GET() {
     database: "ok" as DatabaseState,
     hasUsers: false,
     demoMode: DEMO_MODE,
+    messageEncryption: messageEncryptionEnabled(),
     hasDemoData: false
   };
 

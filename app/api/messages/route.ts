@@ -4,8 +4,13 @@ import { prisma } from "@/lib/prisma";
 import { errorResponse } from "@/lib/api-error";
 import { accessibleTeams, canBroadcast, isTeamMember, teamConversationKey } from "@/lib/messaging";
 import { ensureTeamConversations, unreadCounts } from "@/lib/messaging-server";
+import { decryptText } from "@/lib/message-crypto";
 
 const lastMessageSelect = { orderBy: { createdAt: "desc" as const }, take: 1, select: { body: true, createdAt: true, author: { select: { id: true, name: true } } } };
+
+function preview<T extends { body: string }>(message: T | undefined) {
+  return message ? { ...message, body: decryptText(message.body) } : null;
+}
 
 /** Inbox: accessible team channels, the user's direct messages, unread counts, and people to message. */
 export async function GET() {
@@ -39,14 +44,14 @@ export async function GET() {
           private: !!team.private,
           isMember: isTeamMember(user.role, team.key),
           unread: unread.get(conversation.id) ?? 0,
-          lastMessage: conversation.messages[0] ?? null
+          lastMessage: preview(conversation.messages[0])
         };
       }),
       directs: directConversations.map((conversation) => ({
         id: conversation.id,
         other: conversation.participants.find((participant) => participant.userId !== user.id)?.user ?? null,
         unread: unread.get(conversation.id) ?? 0,
-        lastMessage: conversation.messages[0] ?? null
+        lastMessage: preview(conversation.messages[0])
       })),
       people
     });

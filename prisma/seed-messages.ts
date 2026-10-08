@@ -1,6 +1,7 @@
 // Demo team conversations (team channels + a direct message) linked to real seeded deals and invoices.
 import type { PrismaClient } from "@prisma/client";
 import { TEAM_CHANNELS, canAccessTeam, directConversationKey, teamConversationKey } from "../lib/messaging";
+import { encryptText } from "../lib/message-crypto";
 
 type Person = { id: string; role: string };
 type People = { ceo: Person; sales: Person; finance: Person; operations: Person; admin?: Person | null };
@@ -59,7 +60,7 @@ export async function seedMessages(prisma: PrismaClient, people: People) {
     }
     const createdAt = at(line.minutesAgo);
     await prisma.message.create({
-      data: { conversationId, authorId: author.id, body: line.body, createdAt, recordType: line.record?.type, recordId: line.record?.id, recordLabel: line.record?.label }
+      data: { conversationId, authorId: author.id, body: encryptText(line.body), createdAt, recordType: line.record?.type, recordId: line.record?.id, recordLabel: encryptText(line.record?.label) }
     });
     await prisma.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: createdAt } });
   }

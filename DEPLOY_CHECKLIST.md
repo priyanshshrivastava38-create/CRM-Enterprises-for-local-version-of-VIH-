@@ -41,6 +41,7 @@ Never run `npm run db:seed`, `db:seed:history`, or `db:seed:messages` against pr
 | `SESSION_SECRET` | A new random value — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `APP_URL` | The public URL, e.g. `https://crm.example.com` |
 | `NODE_ENV` | `production` |
+| `MESSAGE_ENCRYPTION_KEY` | Encrypts team messages at rest (AES-256-GCM). Use the value in `.env.production.local`, or generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. **Keep a backup — if it is lost, existing messages can't be read.** Optional: without it, messages are stored unencrypted. |
 
 Do not reuse the `SESSION_SECRET` from `.env`; it is a readable phrase, not a random key.
 
@@ -90,6 +91,18 @@ docker run -p 3000:3000 --env-file <production env file> vih-crm
 - `npm run lint` needs an ESLint 9 config update.
 - Messages refresh every few seconds rather than instantly.
 - The CEO can approve a price request they raised themselves (by choice).
+
+## Message encryption
+
+Messages are encrypted before they are saved when `MESSAGE_ENCRYPTION_KEY` is set. If messages were saved before the key
+was added, encrypt them once (safe to re-run):
+
+```bash
+MESSAGE_ENCRYPTION_KEY='<same key as Vercel>' DATABASE_URL="<production connection string>" npm run messages:encrypt
+```
+
+To rotate the key: set the new key as `MESSAGE_ENCRYPTION_KEY`, the old one as `MESSAGE_ENCRYPTION_KEY_PREVIOUS`, redeploy,
+run `npm run messages:encrypt`, then remove the previous key.
 
 ## Backups
 
