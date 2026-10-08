@@ -13,6 +13,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:history": "tsx prisma/seed-history-cli.ts",
     "db:seed:messages": "tsx prisma/seed-messages-cli.ts",
+    "create-admin": "tsx prisma/create-admin.ts",
     "setup": "npm install && prisma generate",
     "test": "vitest run"
   },

@@ -39,7 +39,19 @@ Never run `npm run db:seed`, `db:seed:history`, or `db:seed:messages` against pr
 
 Do not reuse the `SESSION_SECRET` from `.env`; it is a readable phrase, not a random key.
 
-## 5. Remove or secure the demo accounts
+## 5. Create the first administrator
+
+A fresh production database has no users, and the demo accounts are never created in production. Create one admin
+(password is read from the environment, minimum 10 characters):
+
+```bash
+ADMIN_PASSWORD='<strong password>' DATABASE_URL="<production connection string>" \
+  npm run create-admin -- --email you@company.com --name "Your Name"
+```
+
+Then sign in and add the rest of the team under **User Management**.
+
+## 5b. Remove or secure the demo accounts
 
 If the production database was ever seeded, these accounts exist with the published password `ViH@Demo2026!`:
 
@@ -57,6 +69,10 @@ docker run -p 3000:3000 --env-file <production env file> vih-crm
 (or the equivalent on your host — the app builds as a Next.js standalone server on port 3000)
 
 ## 7. Smoke test after deploy
+
+- Open `https://<your-app>/api/health`. It should return `"status":"ok"`. If not, `checks.database` says why:
+  `not-configured` (no `DATABASE_URL`), `unreachable` (wrong/dead database), `tables-missing` (run step 3),
+  and `hasUsers: false` means step 5 hasn't been done.
 
 - Sign in as a real CEO, Sales, and Finance user; each lands on their own dashboard.
 - Create a lead, a task (date picker), an opportunity, and a price request.
