@@ -2,6 +2,9 @@
 // data from prisma/seed.ts. A database that already has users is never touched, so redeploys keep any changes.
 import { readFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
+import { DEMO_ACCOUNTS } from "../lib/demo-accounts";
+
+const DEMO_EMAILS = DEMO_ACCOUNTS.map((account) => account.email);
 
 /** Demo mode comes from the environment, or from the committed .env.production (which build scripts don't load). */
 function demoModeOn() {
@@ -19,10 +22,17 @@ async function main() {
     return;
   }
   const prisma = new PrismaClient();
-  const users = await prisma.user.count();
+  // "Empty" means no business data. Demo logins can create the demo users on their own, so users alone don't count —
+  // but any non-demo user means real people are using this database, and it is never touched.
+  const [leads, customers, opportunities, nonDemoUsers] = await Promise.all([
+    prisma.lead.count(),
+    prisma.customer.count(),
+    prisma.opportunity.count(),
+    prisma.user.count({ where: { email: { notIn: DEMO_EMAILS } } })
+  ]);
   await prisma.$disconnect();
-  if (users > 0) {
-    console.log(`demo-bootstrap: database already has ${users} user(s); leaving data untouched.`);
+  if (leads + customers + opportunities > 0 || nonDemoUsers > 0) {
+    console.log(`demo-bootstrap: database already has data (${leads} leads, ${customers} customers, ${nonDemoUsers} non-demo users); leaving it untouched.`);
     return;
   }
   console.log("demo-bootstrap: empty database in demo mode; loading demo data…");

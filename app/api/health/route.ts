@@ -27,7 +27,8 @@ export async function GET() {
     sessionSecretDerived: !process.env.SESSION_SECRET && Boolean(process.env.DATABASE_URL),
     database: "ok" as DatabaseState,
     hasUsers: false,
-    demoMode: DEMO_MODE
+    demoMode: DEMO_MODE,
+    hasDemoData: false
   };
 
   if (!checks.databaseUrlSet) {
@@ -35,6 +36,7 @@ export async function GET() {
   } else {
     try {
       checks.hasUsers = (await prisma.user.count({ where: { active: true } })) > 0;
+      checks.hasDemoData = (await prisma.lead.count()) > 0;
     } catch (error) {
       checks.database = classify(error);
     }
