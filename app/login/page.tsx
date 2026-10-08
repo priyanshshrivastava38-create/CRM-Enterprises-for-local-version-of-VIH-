@@ -4,8 +4,8 @@ import { useState } from "react";
 import { ArrowRight, BarChart3, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Workflow } from "lucide-react";
 import { DEMO_ACCOUNTS } from "@/lib/demo-accounts";
 
-// Demo shortcuts are only offered in local development; production shows a plain sign-in form.
-const SHOW_DEMO_ACCOUNTS = process.env.NODE_ENV !== "production";
+// Demo shortcuts appear in local development, or on a deployment explicitly marked as a demo (NEXT_PUBLIC_DEMO_MODE=true).
+const SHOW_DEMO_ACCOUNTS = process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 const HIGHLIGHTS = [
   { icon: Workflow, title: "Unified pipeline", text: "Lead intake, qualification, and opportunities in one place." },
@@ -163,7 +163,7 @@ export default function LoginPage() {
 
           {SHOW_DEMO_ACCOUNTS ? (
             <div className="mt-10 rounded-2xl border border-dashed border-line p-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Development · demo accounts</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{process.env.NODE_ENV !== "production" ? "Development · demo accounts" : "Demo accounts"}</p>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {DEMO_ACCOUNTS.map((account) => (
                   <button

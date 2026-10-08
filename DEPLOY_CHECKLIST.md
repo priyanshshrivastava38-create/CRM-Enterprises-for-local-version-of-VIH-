@@ -1,5 +1,10 @@
 # Deployment checklist — ViH Metaverse CRM
 
+> **Demo deployment (e.g. showing the CRM to a manager):** set `SESSION_SECRET` and `NEXT_PUBLIC_DEMO_MODE=true` in
+> Vercel and redeploy. The build creates the tables and, if the database is empty, loads the demo data, and the login
+> page shows the demo accounts (password `ViH@Demo2026!`). Never use demo mode for real company data — remove the
+> variable and use `npm run create-admin` instead.
+
 Work through these in order. Steps 1–5 must be done before real users sign in.
 
 ## 1. Commit and push the code
