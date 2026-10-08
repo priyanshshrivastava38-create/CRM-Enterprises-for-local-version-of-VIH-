@@ -5,9 +5,11 @@ export type SalesAgentLoad = {
   activeDeals: number;
 };
 
+export type SalesAgentWorkload = Omit<SalesAgentLoad, "id">;
+
 export type AssignmentPriority = "HOT" | "WARM" | "COLD";
 
-export function calculateWorkloadScore(agent: SalesAgentLoad, leadPriority: AssignmentPriority = "WARM") {
+export function calculateWorkloadScore(agent: SalesAgentWorkload, leadPriority: AssignmentPriority = "WARM") {
   const leadWeight = leadPriority === "HOT" ? 1.8 : leadPriority === "WARM" ? 1.35 : 1;
   const overdueWeight = leadPriority === "HOT" ? 2.7 : leadPriority === "WARM" ? 2.2 : 1.7;
   const dealWeight = leadPriority === "HOT" ? 1.1 : leadPriority === "WARM" ? 0.85 : 0.7;

@@ -20,7 +20,17 @@ async function leadWithHistory(id: string) {
     }
   });
   if (!lead) return null;
-  return { ...lead, ai: analyzeLead(lead) };
+  const scoreMeta = calculateLeadScore({
+    status: lead.status,
+    priority: lead.priority,
+    notes: lead.notes,
+    source: lead.source,
+    email: lead.email,
+    phone: lead.phone,
+    calls: lead.calls,
+    taskCompletedCount: lead.tasks.filter((task) => task.status === "COMPLETED").length
+  });
+  return { ...lead, scoreMeta, ai: analyzeLead(lead) };
 }
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {

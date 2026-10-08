@@ -1,10 +1,13 @@
 import { PrismaClient, LeadStatus, Priority, TaskType } from "@prisma/client";
-import bcrypt from "bcryptjs";
+import { DEMO_ACCOUNTS } from "../lib/demo-accounts";
+import { hashPassword } from "../lib/auth";
 import { calculateLeadScore, priorityFromScore } from "../lib/scoring";
 import { approvePriceRequest } from "../lib/workflows/approve-price-request";
+import { runBillingForCustomer } from "../lib/workflows/run-billing";
+import { finalizeBillingRun } from "../lib/workflows/finalize-billing-run";
+import { getOrCreateReconciliation } from "../lib/workflows/reconcile-billing-run";
 
 const prisma = new PrismaClient();
-const DEMO_PASSWORD = "Vih@12345";
 
 const firstNames = ["Aarav", "Vivaan", "Aditya", "Vihaan", "Arjun", "Sai", "Reyansh", "Krishna", "Ishaan", "Shaurya", "Ananya", "Diya", "Ira", "Meera", "Anika", "Riya", "Kiara", "Saanvi", "Priya", "Nisha"];
 const lastNames = ["Sharma", "Mehta", "Iyer", "Kapoor", "Nair", "Rao", "Patel", "Joshi", "Gupta", "Menon", "Bansal", "Agarwal", "Kulkarni", "Reddy", "Chopra"];
@@ -34,6 +37,8 @@ function addDays(days: number) {
 }
 
 async function main() {
+  const demoEmails = DEMO_ACCOUNTS.map((account) => account.email.toLowerCase().trim());
+
   await prisma.payment.deleteMany();
   await prisma.invoiceLineItem.deleteMany();
   await prisma.invoice.deleteMany();
@@ -63,21 +68,52 @@ async function main() {
   await prisma.call.deleteMany();
   await prisma.task.deleteMany();
   await prisma.lead.deleteMany();
+  await prisma.contact.deleteMany();
+  await prisma.organization.deleteMany();
   await prisma.campaign.deleteMany();
-  await prisma.user.deleteMany();
+  await prisma.user.deleteMany({ where: { email: { in: demoEmails } } });
 
-  const password = await bcrypt.hash(DEMO_PASSWORD, 10);
-  const [admin, sales1, sales2, sales3, ceo, finance, operations] = await Promise.all([
-    prisma.user.create({ data: { name: "Vih Admin", email: "admin@vihmetaverse.com", password, role: "ADMIN" } }),
-    prisma.user.create({ data: { name: "Anjali Verma", email: "sales1@vihmetaverse.com", password, role: "SALES" } }),
-    prisma.user.create({ data: { name: "Rohan Khanna", email: "sales2@vihmetaverse.com", password, role: "SALES" } }),
-    prisma.user.create({ data: { name: "Kabir Sethi", email: "sales3@vihmetaverse.com", password, role: "SALES" } }),
-    prisma.user.create({ data: { name: "Meera Kapoor", email: "ceo@vihmetaverse.com", password, role: "CEO" } }),
-    prisma.user.create({ data: { name: "Suresh Iyer", email: "finance@vihmetaverse.com", password, role: "FINANCE" } }),
-    prisma.user.create({ data: { name: "Neha Bansal", email: "ops@vihmetaverse.com", password, role: "OPERATIONS" } })
-  ]);
+  const demoUsers = await Promise.all(
+    DEMO_ACCOUNTS.map(async (account) => {
+      const normalizedEmail = account.email.trim().toLowerCase();
+      const passwordHash = await hashPassword(account.password);
+      return prisma.user.upsert({
+        where: { email: normalizedEmail },
+        update: {
+          name: account.name,
+          password: passwordHash,
+          role: account.role,
+          active: true
+        },
+        create: {
+          name: account.name,
+          email: normalizedEmail,
+          password: passwordHash,
+          role: account.role,
+          active: true
+        }
+      });
+    })
+  );
 
-  const agents = [sales1, sales2, sales3];
+  const [sales, ceo, finance, operations] = [
+    demoUsers.find((user) => user.email === "vih.sales@vih.demo"),
+    demoUsers.find((user) => user.email === "vih.ceo@vih.demo"),
+    demoUsers.find((user) => user.email === "vih.finance@vih.demo"),
+    demoUsers.find((user) => user.email === "vih.tech@vih.demo")
+  ];
+
+  if (!sales || !ceo || !finance || !operations) {
+    throw new Error("One or more required demo accounts were not created.");
+  }
+
+  const admin = await prisma.user.upsert({
+    where: { email: "admin@vihmetaverse.com" },
+    update: { role: "ADMIN", active: true },
+    create: { name: "Vih Admin", email: "admin@vihmetaverse.com", password: await hashPassword(DEMO_ACCOUNTS[0].password), role: "ADMIN", active: true }
+  });
+
+  const agents = [sales, sales, sales];
   const campaigns = await Promise.all(
     ["SMS Growth Push", "Google Lead Sprint", "WhatsApp Callback Drive", "Referral Partner Week"].map((name, index) =>
       prisma.campaign.create({
@@ -93,11 +129,44 @@ async function main() {
     )
   );
 
+  const organizations = await Promise.all(
+    companies.map((name, index) =>
+      prisma.organization.create({
+        data: {
+          name,
+          industry: pick(["Logistics", "Retail", "Financial Services", "Healthcare", "Education", "Technology", "Transportation", "Food & Beverage", "Real Estate", "Banking"], index),
+          website: `https://www.${name.toLowerCase().replace(/[^a-z0-9]+/g, "")}.in`,
+          city: pick(cities, index),
+          country: "India",
+          phone: `+91 80${String(41000000 + index * 13791).slice(0, 8)}`,
+          email: `hello@${name.toLowerCase().replace(/[^a-z0-9]+/g, "")}.in`,
+          tags: [index % 2 === 0 ? "Enterprise" : "Mid-market", index % 3 === 0 ? "Priority" : "Prospect"],
+          contacts: {
+            create: {
+              firstName: pick(firstNames, index + 10),
+              lastName: pick(lastNames, index + 4),
+              email: `contact${index + 1}@${name.toLowerCase().replace(/[^a-z0-9]+/g, "")}.in`,
+              phone: `+91 98${String(10000000 + index * 19371).slice(0, 8)}`,
+              jobTitle: pick(["Founder", "Marketing Head", "Sales Director", "Operations Lead", "Finance Controller"], index),
+              department: pick(["Leadership", "Marketing", "Sales", "Operations", "Finance"], index),
+              city: pick(cities, index),
+              country: "India",
+              notes: "Primary business contact for messaging platform evaluation."
+            }
+          }
+        },
+        include: { contacts: true }
+      })
+    )
+  );
+  const organizationsByName = new Map(organizations.map((organization) => [organization.name, organization]));
+
   for (let index = 0; index < 72; index++) {
     const firstName = pick(firstNames, index);
     const lastName = pick(lastNames, index * 3);
     const status = pick(statuses, index);
     const note = pick(notes, index);
+    const organization = organizationsByName.get(pick(companies, index));
     const base = {
       firstName,
       lastName,
@@ -116,7 +185,9 @@ async function main() {
         ...base,
         priority: priorityFromScore(scoreResult.score),
         score: scoreResult.score,
-        assignedTo: agents[index % agents.length].id,
+        assignedTo: sales.id,
+        organizationId: organization?.id,
+        contactId: organization?.contacts[0]?.id,
         campaignId: campaigns[index % campaigns.length].id,
         nextFollowUpAt: addDays((index % 9) - 3),
         lastContactedAt: ["CONTACTED", "QUALIFIED", "INTERESTED", "FOLLOW_UP", "CONVERTED"].includes(status) ? addDays(-1 - (index % 6)) : null,
@@ -125,7 +196,7 @@ async function main() {
         activities: {
           create: [
             { userId: admin.id, activityType: "LEAD_CREATED", description: "Lead imported from demo seed", metadata: { source: base.source } },
-            { userId: agents[index % agents.length].id, activityType: "ASSIGNED", description: `Assigned to ${agents[index % agents.length].name}` }
+            { userId: sales.id, activityType: "ASSIGNED", description: `Assigned to ${sales.name}` }
           ]
         }
       }
@@ -135,7 +206,7 @@ async function main() {
       await prisma.call.create({
         data: {
           leadId: lead.id,
-          agentId: agents[index % agents.length].id,
+          agentId: sales.id,
           direction: "OUTBOUND",
           status: index % 8 === 0 ? "NO_ANSWER" : "CONNECTED",
           outcome: index % 8 === 0 ? "No answer" : pick(["Connected", "Interested", "Callback requested", "Not interested"], index),
@@ -176,8 +247,8 @@ async function main() {
       expectedStartDate: addDays(5),
       opportunityValue: 1200000,
       status: "NEW",
-      salesOwnerId: sales1.id,
-      activities: { create: { userId: sales1.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by Anjali Verma" } },
+      salesOwnerId: sales.id,
+      activities: { create: { userId: sales.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by ViH Sales User" } },
       requirements: {
         create: [
           { service: "SMS", expectedMonthlyVolume: 2800000, notes: "Order confirmations, delivery updates and OTP" },
@@ -191,7 +262,7 @@ async function main() {
     data: {
       requestNumber: "PAR-000001",
       opportunityId: oppWon.id,
-      requestedById: sales1.id,
+      requestedById: sales.id,
       status: "SUBMITTED",
       proposedEffectiveDate: new Date("2026-09-01"),
       setupCost: 25000,
@@ -247,7 +318,7 @@ async function main() {
     for (const task of [salesTask, financeTask].filter(Boolean) as typeof onboarding.tasks) {
       await prisma.onboardingTask.update({
         where: { id: task.id },
-        data: { status: "COMPLETED", completedAt: new Date(), completedById: task.team === "SALES" ? sales1.id : finance.id }
+        data: { status: "COMPLETED", completedAt: new Date(), completedById: task.team === "SALES" ? sales.id : finance.id }
       });
     }
     await prisma.onboardingChecklist.update({ where: { id: onboarding.id }, data: { status: "IN_PROGRESS", startedAt: addDays(-3) } });
@@ -301,6 +372,34 @@ async function main() {
     ]
   });
 
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+  const currentMonthBatch = await prisma.usageImportBatch.create({
+    data: { uploadedById: operations.id, service: "SMS", status: "COMPLETED", rowCount: 4, successCount: 4, errorCount: 0 }
+  });
+  await prisma.usageRecord.createMany({
+    data: [
+      { importBatchId: currentMonthBatch.id, platformAccountId: smsAccount.id, service: "SMS", component: "SUBMITTED", usageDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 5)), quantity: 1250000, sourceReference: "demo-current-submitted" },
+      { importBatchId: currentMonthBatch.id, platformAccountId: smsAccount.id, service: "SMS", component: "DELIVERED", usageDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 12)), quantity: 980000, sourceReference: "demo-current-delivered" },
+      { importBatchId: currentMonthBatch.id, platformAccountId: wabaAccount.id, service: "WHATSAPP", component: "MARKETING", usageDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 4)), quantity: 64000, sourceReference: "demo-current-marketing" },
+      { importBatchId: currentMonthBatch.id, platformAccountId: wabaAccount.id, service: "WHATSAPP", component: "UTILITY", usageDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 5)), quantity: 42000, sourceReference: "demo-current-utility" }
+    ]
+  });
+  const billingRun = await runBillingForCustomer(approved.customerId, monthStart, monthEnd);
+  await getOrCreateReconciliation(billingRun.id);
+  const invoice = await finalizeBillingRun(billingRun.id, finance.id);
+  await prisma.payment.create({
+    data: {
+      invoiceId: invoice.id,
+      amount: Math.round(Number(invoice.totalAmount) * 0.35 * 100) / 100,
+      paidOn: new Date(),
+      method: "BANK_TRANSFER",
+      reference: "DEMO-NEFT-2026-1042",
+      recordedById: finance.id
+    }
+  });
+
   const oppPending = await prisma.opportunity.create({
     data: {
       name: "QuickCart Online — Messaging Services",
@@ -311,8 +410,8 @@ async function main() {
       opportunityValue: 450000,
       status: "PROPOSAL",
       expectedStartDate: addDays(15),
-      salesOwnerId: sales2.id,
-      activities: { create: { userId: sales2.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by Rohan Khanna" } },
+      salesOwnerId: sales.id,
+      activities: { create: { userId: sales.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by ViH Sales User" } },
       requirements: { create: [{ service: "SMS", expectedMonthlyVolume: 500000, notes: "Order and delivery status updates" }] }
     }
   });
@@ -321,7 +420,7 @@ async function main() {
     data: {
       requestNumber: "PAR-000002",
       opportunityId: oppPending.id,
-      requestedById: sales2.id,
+      requestedById: sales.id,
       status: "RETURNED_FOR_REVISION",
       proposedEffectiveDate: new Date("2026-10-01"),
       setupCost: 10000,
@@ -345,7 +444,7 @@ async function main() {
     data: {
       requestNumber: "PAR-000003",
       opportunityId: oppPending.id,
-      requestedById: sales2.id,
+      requestedById: sales.id,
       status: "SUBMITTED",
       proposedEffectiveDate: new Date("2026-10-01"),
       setupCost: 10000,
@@ -376,7 +475,7 @@ async function main() {
     data: {
       requestNumber: "PAR-000004",
       customerId: approved.customerId,
-      requestedById: sales1.id,
+      requestedById: sales.id,
       status: "REJECTED",
       proposedEffectiveDate: new Date("2026-12-01"),
       reason: "Requesting a discounted WhatsApp marketing rate ahead of renewal.",
@@ -396,8 +495,8 @@ async function main() {
       contactPhone: "+91 9800334455",
       opportunityValue: 300000,
       status: "QUALIFYING",
-      salesOwnerId: sales3.id,
-      activities: { create: { userId: sales3.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by Kabir Sethi" } },
+      salesOwnerId: sales.id,
+      activities: { create: { userId: sales.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by ViH Sales User" } },
       requirements: { create: [{ service: "WHATSAPP", expectedMonthlyVolume: 60000, notes: "Ride confirmations and promos" }] }
     }
   });
@@ -406,7 +505,7 @@ async function main() {
     data: {
       requestNumber: "PAR-000005",
       opportunityId: oppQualifying.id,
-      requestedById: sales3.id,
+      requestedById: sales.id,
       status: "DRAFT",
       proposedEffectiveDate: new Date("2026-11-01"),
       setupCost: 5000,
@@ -425,17 +524,17 @@ async function main() {
       opportunityValue: 180000,
       status: "LOST",
       lostReason: "Budget not approved this quarter",
-      salesOwnerId: sales1.id,
+      salesOwnerId: sales.id,
       activities: {
         create: [
-          { userId: sales1.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by Anjali Verma" },
-          { userId: sales1.id, activityType: "STATUS_CHANGED", description: "Status changed from PROPOSAL to LOST" }
+          { userId: sales.id, activityType: "OPPORTUNITY_CREATED", description: "Opportunity created by ViH Sales User" },
+          { userId: sales.id, activityType: "STATUS_CHANGED", description: "Status changed from PROPOSAL to LOST" }
         ]
       }
     }
   });
 
-  for (const recipient of [admin, sales1, sales2, sales3, ceo, finance, operations]) {
+  for (const recipient of [admin, sales, ceo, finance, operations]) {
     await prisma.notification.create({
       data: {
         userId: recipient.id,

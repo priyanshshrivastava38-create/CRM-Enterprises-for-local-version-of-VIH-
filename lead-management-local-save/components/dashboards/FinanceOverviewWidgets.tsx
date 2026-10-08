@@ -9,9 +9,13 @@ type Data = {
   pendingReviewCount: number;
   reconciliationCounts: { PENDING: number; MATCHED: number; DISCREPANCY: number; RESOLVED: number };
   adjustmentsThisMonth: { creditTotal: number; debitTotal: number };
+  revenueThisMonth: number;
+  collectionsThisMonth: number;
+  collectionRate: number | null;
   outstanding: { count: number; amount: number };
   overdue: { count: number; amount: number };
-  recentInvoices: { invoiceNumber: string; customerCode: string; customerName: string; totalAmount: number; status: string; issueDate: string }[];
+  aging: { current: number; days1To30: number; days31To60: number; days61To90: number; days90Plus: number };
+  recentInvoices: { id: string; invoiceNumber: string; customerCode: string; customerName: string; totalAmount: number; amountDue: number; status: string; issueDate: string }[];
 };
 
 function inr(n: number) {
@@ -36,7 +40,23 @@ export function FinanceOverviewWidgets() {
   if (!data) return null;
 
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          ["Revenue invoiced this month", data.revenueThisMonth],
+          ["Cash collected this month", data.collectionsThisMonth],
+          ["Outstanding receivables", data.outstanding.amount],
+          ["Overdue receivables", data.overdue.amount]
+        ].map(([label, amount]) => (
+          <Card key={label as string} className="p-4">
+            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</div>
+            <div className="mt-2 text-xl font-semibold text-ink">{inr(amount as number)}</div>
+            {label === "Cash collected this month" ? <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Collection rate: {data.collectionRate == null ? "—" : `${data.collectionRate}%`}</div> : null}
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
       <Card>
         <h3 className="font-semibold text-ink">Billing & Reconciliation</h3>
         <div className="mt-3 space-y-2 text-sm">
@@ -78,17 +98,30 @@ export function FinanceOverviewWidgets() {
         </div>
       </Card>
       <Card>
+        <h3 className="font-semibold text-ink">Receivables Aging</h3>
+        <div className="mt-3 space-y-2 text-sm">
+          {[
+            ["Current", data.aging.current],
+            ["1–30 days", data.aging.days1To30],
+            ["31–60 days", data.aging.days31To60],
+            ["61–90 days", data.aging.days61To90],
+            ["90+ days", data.aging.days90Plus]
+          ].map(([label, amount]) => (
+            <div key={label as string} className="flex items-center justify-between">
+              <span className="text-slate-500 dark:text-slate-400">{label}</span>
+              <span className={`font-medium ${(label === "61–90 days" || label === "90+ days") && Number(amount) > 0 ? "text-red-600 dark:text-red-400" : "text-ink"}`}>{inr(amount as number)}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card>
         <h3 className="font-semibold text-ink">Recent Invoices</h3>
         <div className="mt-3 space-y-2">
           {data.recentInvoices.length ? (
             data.recentInvoices.map((inv) => (
-              <Link key={inv.invoiceNumber} href="/invoices" className="flex items-center justify-between text-sm hover:text-brand-600 dark:hover:text-brand-400">
-                <span>
-                  {inv.invoiceNumber} · {inv.customerCode}
-                </span>
-                <span className="flex items-center gap-2">
-                  {inr(inv.totalAmount)} <Badge tone={statusTone(inv.status)}>{titleCase(inv.status)}</Badge>
-                </span>
+              <Link key={inv.invoiceNumber} href={`/invoices/${inv.id}`} className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 text-sm hover:bg-panel">
+                <span className="min-w-0"><span className="block truncate font-medium text-ink">{inv.invoiceNumber} · {inv.customerCode}</span><span className="text-xs text-slate-500">Due {inr(inv.amountDue)}</span></span>
+                <Badge tone={statusTone(inv.status)}>{titleCase(inv.status)}</Badge>
               </Link>
             ))
           ) : (
@@ -96,6 +129,7 @@ export function FinanceOverviewWidgets() {
           )}
         </div>
       </Card>
+      </div>
     </div>
   );
 }

@@ -7,6 +7,8 @@ import { Plus } from "lucide-react";
 import { Card, Badge, Title, Input, Textarea, Select, Info, Empty, LoadingGrid, Modal, Drawer, primaryBtnClass, secondaryBtnClass, fieldClass } from "@/components/shared/ui";
 import { dateLabel, titleCase } from "@/lib/format";
 import { SERVICE_COMPONENTS } from "@/lib/billing/constants";
+import { DateField } from "@/components/shared/DateField";
+import { DEAL_MANAGER_ROLES } from "@/lib/rbac";
 
 type Slab = { minVolume: number | ""; maxVolume: number | "" | null; rate: number | "" };
 type LineItem = { service: string; component: string; rateType: string; flatRate: number | ""; expectedVolume: number | ""; billingMetric: string; slabs: Slab[] };
@@ -98,6 +100,7 @@ function PriceApprovalsContent() {
   const [reviewError, setReviewError] = useState("");
 
   const canReview = me?.role === "CEO" || me?.role === "ADMIN";
+  const canCreate = !!me && (DEAL_MANAGER_ROLES as readonly string[]).includes(me.role);
 
   async function loadMe() {
     const res = await fetch("/api/bootstrap");
@@ -148,8 +151,11 @@ function PriceApprovalsContent() {
       setForm({ ...emptyForm(), mode: "opportunity", opportunityId });
       setEditingId(null);
       setShowForm(true);
+    } else if (searchParams.get("create") && canCreate) {
+      openCreate();
     }
-  }, [searchParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, canCreate]);
 
   function openCreate() {
     setForm(emptyForm());
@@ -293,9 +299,11 @@ function PriceApprovalsContent() {
         title="Price Approvals"
         subtitle="Submit pricing for CEO approval. Approved requests become the customer's official Rate Plan."
         action={
-          <button onClick={openCreate} className={`flex items-center gap-2 ${primaryBtnClass}`}>
-            <Plus size={16} /> New Request
-          </button>
+          canCreate ? (
+            <button onClick={openCreate} className={`flex items-center gap-2 ${primaryBtnClass}`}>
+              <Plus size={16} /> New Request
+            </button>
+          ) : null
         }
       />
 
@@ -304,7 +312,7 @@ function PriceApprovalsContent() {
           <button
             key={tab}
             onClick={() => setStatusFilter(tab)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
               statusFilter === tab ? "bg-brand-600 text-white" : "border border-line text-slate-600 hover:bg-panel dark:text-slate-300"
             }`}
           >
@@ -386,7 +394,7 @@ function PriceApprovalsContent() {
             )}
 
             <div className="grid gap-3 sm:grid-cols-3">
-              <Input label="Proposed Effective Date" type="date" value={form.proposedEffectiveDate} onChange={(v) => setForm({ ...form, proposedEffectiveDate: v })} required />
+              <DateField label="Proposed Effective Date" mode="date" value={form.proposedEffectiveDate} onChange={(v) => setForm({ ...form, proposedEffectiveDate: v })} required />
               <Input label="One-time Setup Cost (₹)" type="number" value={form.setupCost} onChange={(v) => setForm({ ...form, setupCost: v })} />
               <Input label="Payment Terms" value={form.paymentTerms} onChange={(v) => setForm({ ...form, paymentTerms: v })} placeholder="e.g. Net 30" />
               <Input label="Expected Monthly Revenue (₹)" type="number" value={form.expectedMonthlyRevenue} onChange={(v) => setForm({ ...form, expectedMonthlyRevenue: v })} />

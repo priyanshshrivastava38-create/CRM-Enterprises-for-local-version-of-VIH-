@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { monthToPeriod } from "@/lib/validators";
+import { growthPct as computeGrowth, lastMonths, sumByMonth } from "@/lib/dashboard-metrics";
+
+const LEADERSHIP_ROLES = ["CEO", "ADMIN", "CSO", "CFO"];
 
 function shiftMonth(month: string, delta: number) {
   const [year, m] = month.split("-").map(Number);
@@ -18,7 +21,7 @@ function status(count: number, amberAt = 1, redAt = 3): "green" | "amber" | "red
 export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "CEO" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!LEADERSHIP_ROLES.includes(user.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
   const month = searchParams.get("month") ?? new Date().toISOString().slice(0, 7);
@@ -28,6 +31,8 @@ export async function GET(request: Request) {
   const previousMonth = shiftMonth(month, -1);
   const { periodStart: prevStart, periodEnd: prevEnd } = monthToPeriod(previousMonth);
   const now = new Date();
+  const months = lastMonths(month, 6);
+  const windowStart = months[0].start;
 
   const [
     newLeads,
@@ -47,12 +52,16 @@ export async function GET(request: Request) {
     billingByService,
     reconciliationCounts,
     adjustmentsThisMonth,
-    outstandingInvoices,
-    overdueInvoices,
     invoicesRaised,
     collectionsReceived,
     operationsTasksPending,
-    platformIssues
+    platformIssues,
+    billingRunsInWindow,
+    paymentsInWindow,
+    leadsInWindow,
+    wonInWindow,
+    pipelineByStage,
+    openInvoices
   ] = await Promise.all([
     prisma.lead.count({ where: { createdAt: { gte: periodStart, lte: periodEnd }, deletedAt: null } }),
     prisma.opportunity.count({ where: { createdAt: { gte: periodStart, lte: periodEnd }, deletedAt: null } }),
@@ -75,13 +84,30 @@ export async function GET(request: Request) {
     prisma.billingLineItem.groupBy({ by: ["service"], where: { billingRun: { periodStart } }, _sum: { amount: true } }),
     prisma.reconciliation.groupBy({ by: ["status"], where: { billingRun: { periodStart } }, _count: { _all: true } }),
     prisma.adjustment.groupBy({ by: ["type"], where: { createdAt: { gte: periodStart, lte: periodEnd } }, _sum: { amount: true } }),
-    prisma.invoice.aggregate({ where: { status: { in: ["ISSUED", "EXPORTED"] } }, _sum: { totalAmount: true }, _count: { _all: true } }),
-    prisma.invoice.aggregate({ where: { status: { in: ["ISSUED", "EXPORTED"] }, dueDate: { lt: now } }, _sum: { totalAmount: true }, _count: { _all: true } }),
     prisma.invoice.count({ where: { issueDate: { gte: periodStart, lte: periodEnd } } }),
     prisma.payment.aggregate({ where: { paidOn: { gte: periodStart, lte: periodEnd } }, _sum: { amount: true } }),
     prisma.onboardingTask.count({ where: { team: "OPERATIONS", status: { in: ["PENDING", "IN_PROGRESS"] } } }),
-    prisma.platformAccount.count({ where: { status: { not: "ACTIVE" } } })
+    prisma.platformAccount.count({ where: { status: { not: "ACTIVE" } } }),
+    prisma.billingRun.findMany({ where: { periodStart: { gte: windowStart, lte: periodEnd } }, select: { periodStart: true, totalAmount: true } }),
+    prisma.payment.findMany({ where: { paidOn: { gte: windowStart, lte: periodEnd } }, select: { paidOn: true, amount: true } }),
+    prisma.lead.findMany({ where: { createdAt: { gte: windowStart, lte: periodEnd }, deletedAt: null }, select: { createdAt: true } }),
+    prisma.opportunity.findMany({ where: { status: "WON", updatedAt: { gte: windowStart, lte: periodEnd }, deletedAt: null }, select: { updatedAt: true, opportunityValue: true } }),
+    prisma.opportunity.groupBy({ by: ["status"], where: { deletedAt: null }, _count: { _all: true }, _sum: { opportunityValue: true } }),
+    prisma.invoice.findMany({ where: { status: { in: ["ISSUED", "EXPORTED", "OVERDUE"] } }, select: { totalAmount: true, dueDate: true, payments: { select: { amount: true } } } })
   ]);
+
+  const revenueTrend = sumByMonth(billingRunsInWindow.map((row) => ({ date: row.periodStart, amount: Number(row.totalAmount) })), months);
+  const collectedTrend = sumByMonth(paymentsInWindow.map((row) => ({ date: row.paidOn, amount: Number(row.amount) })), months);
+  const leadTrend = sumByMonth(leadsInWindow.map((row) => ({ date: row.createdAt, amount: 1 })), months);
+  const wonTrend = sumByMonth(wonInWindow.map((row) => ({ date: row.updatedAt, amount: Number(row.opportunityValue) })), months);
+  const stageMap = new Map(pipelineByStage.map((row) => [row.status, { count: row._count._all, value: Number(row._sum.opportunityValue ?? 0) }]));
+  // Net receivables: invoice total minus payments already received (matches the Finance dashboard).
+  const balances = openInvoices
+    .map((invoice) => ({ dueDate: invoice.dueDate, balance: Number(invoice.totalAmount) - invoice.payments.reduce((sum, payment) => sum + Number(payment.amount), 0) }))
+    .filter((invoice) => invoice.balance > 0);
+  const netOutstanding = { count: balances.length, amount: balances.reduce((sum, invoice) => sum + invoice.balance, 0) };
+  const overdueBalances = balances.filter((invoice) => invoice.dueDate < now);
+  const netOverdue = { count: overdueBalances.length, amount: overdueBalances.reduce((sum, invoice) => sum + invoice.balance, 0) };
 
   const parStatusMap = new Map(priceApprovalCounts.map((row) => [row.status, row._count._all]));
   const onboardingMap = new Map(onboardingCounts.map((row) => [row.status, row._count._all]));
@@ -96,7 +122,7 @@ export async function GET(request: Request) {
 
   const currentTotalBilling = Number(billingThisMonth._sum.totalAmount ?? 0);
   const previousTotalBilling = Number(billingPrevMonth._sum.totalAmount ?? 0);
-  const growthPct = previousTotalBilling > 0 ? Math.round(((currentTotalBilling - previousTotalBilling) / previousTotalBilling) * 1000) / 10 : null;
+  const growthPct = computeGrowth(currentTotalBilling, previousTotalBilling);
 
   const blockedOnboarding = onboardingMap.get("BLOCKED") ?? 0;
   const discrepancies = reconMap.get("DISCREPANCY") ?? 0;
@@ -104,8 +130,8 @@ export async function GET(request: Request) {
   const rejectedApprovals = parStatusMap.get("REJECTED") ?? 0;
 
   const alerts: { severity: "amber" | "red"; message: string }[] = [];
-  if (overdueInvoices._count._all > 0) {
-    alerts.push({ severity: "red", message: `${overdueInvoices._count._all} overdue invoice(s) totaling ₹${Number(overdueInvoices._sum.totalAmount ?? 0).toLocaleString("en-IN")}` });
+  if (netOverdue.count > 0) {
+    alerts.push({ severity: "red", message: `${netOverdue.count} overdue invoice(s) totaling ₹${netOverdue.amount.toLocaleString("en-IN")}` });
   }
   if (blockedOnboarding > 0) alerts.push({ severity: "red", message: `${blockedOnboarding} customer onboarding checklist(s) blocked` });
   if (discrepancies > 0) alerts.push({ severity: "amber", message: `${discrepancies} billing run(s) have a reconciliation discrepancy` });
@@ -156,8 +182,8 @@ export async function GET(request: Request) {
       pendingReconciliation: (reconMap.get("PENDING") ?? 0) + discrepancies,
       creditsTotal: adjustmentMap.get("CREDIT") ?? 0,
       debitsTotal: adjustmentMap.get("DEBIT") ?? 0,
-      outstanding: Number(outstandingInvoices._sum.totalAmount ?? 0),
-      overdue: Number(overdueInvoices._sum.totalAmount ?? 0),
+      outstanding: netOutstanding.amount,
+      overdue: netOverdue.amount,
       status: status((reconMap.get("PENDING") ?? 0) + discrepancies, 1, 3)
     },
     operations: {
@@ -168,13 +194,15 @@ export async function GET(request: Request) {
     },
     collections: {
       invoicesRaised,
-      outstandingCount: outstandingInvoices._count._all,
-      outstandingAmount: Number(outstandingInvoices._sum.totalAmount ?? 0),
-      overdueCount: overdueInvoices._count._all,
-      overdueAmount: Number(overdueInvoices._sum.totalAmount ?? 0),
+      outstandingCount: netOutstanding.count,
+      outstandingAmount: netOutstanding.amount,
+      overdueCount: netOverdue.count,
+      overdueAmount: netOverdue.amount,
       collectionsReceived: Number(collectionsReceived._sum.amount ?? 0),
-      status: status(overdueInvoices._count._all, 1, 3)
+      status: status(netOverdue.count, 1, 3)
     },
+    trend: months.map((m, index) => ({ month: m.key, label: m.label, revenue: revenueTrend[index], collected: collectedTrend[index], newLeads: leadTrend[index], wonValue: wonTrend[index] })),
+    pipelineByStage: (["NEW", "QUALIFYING", "PROPOSAL", "WON", "LOST"] as const).map((stage) => ({ stage, count: stageMap.get(stage)?.count ?? 0, value: stageMap.get(stage)?.value ?? 0 })),
     alerts
   });
 }

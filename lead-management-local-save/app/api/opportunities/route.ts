@@ -15,8 +15,9 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get("q")?.trim();
   const status = searchParams.get("status");
+  const pipelineView = searchParams.get("view") === "pipeline";
   const page = Math.max(1, Number(searchParams.get("page") ?? 1) || 1);
-  const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? 25) || 25));
+  const pageSize = Math.min(pipelineView ? 10_000 : 100, Math.max(1, Number(searchParams.get("pageSize") ?? (pipelineView ? 10_000 : 25)) || 25));
 
   if (status && status !== "ALL" && !(Object.values(OpportunityStatus) as string[]).includes(status)) {
     return NextResponse.json({ error: "Invalid status filter" }, { status: 400 });
@@ -28,19 +29,38 @@ export async function GET(request: Request) {
     ...(status && status !== "ALL" ? { status: status as OpportunityStatus } : {})
   };
   if (user.role === "SALES") where.salesOwnerId = user.id;
+  const stalledCutoff = new Date(Date.now() - 14 * 86_400_000);
 
-  const [opportunities, total] = await Promise.all([
+  const [opportunities, total, stageGroups, openPipeline, stalledCount] = await Promise.all([
     prisma.opportunity.findMany({
       where,
       include: { salesOwner: { select: { id: true, name: true } }, requirements: true, customer: { select: { id: true, customerCode: true } } },
       orderBy: { updatedAt: "desc" },
-      skip: (page - 1) * pageSize,
+      skip: pipelineView ? 0 : (page - 1) * pageSize,
       take: pageSize
     }),
-    prisma.opportunity.count({ where })
+    prisma.opportunity.count({ where }),
+    prisma.opportunity.groupBy({ by: ["status"], where, _count: { _all: true }, _sum: { opportunityValue: true } }),
+    prisma.opportunity.aggregate({
+      where: { ...where, status: { notIn: ["WON", "LOST"] } },
+      _count: { _all: true },
+      _sum: { opportunityValue: true },
+      _avg: { opportunityValue: true }
+    }),
+    prisma.opportunity.count({ where: { ...where, status: { notIn: ["WON", "LOST"] }, updatedAt: { lte: stalledCutoff } } })
   ]);
 
-  return NextResponse.json({ opportunities, pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } });
+  return NextResponse.json({
+    opportunities,
+    pipeline: {
+      stages: Object.fromEntries(stageGroups.map((group) => [group.status, { count: group._count._all, value: Number(group._sum.opportunityValue ?? 0) }])),
+      openDealCount: openPipeline._count._all,
+      totalValue: Number(openPipeline._sum.opportunityValue ?? 0),
+      averageDealSize: Number(openPipeline._avg.opportunityValue ?? 0),
+      stalledCount
+    },
+    pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) }
+  });
 }
 
 export async function POST(request: Request) {

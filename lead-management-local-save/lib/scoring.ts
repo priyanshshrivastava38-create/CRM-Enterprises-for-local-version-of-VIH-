@@ -11,65 +11,71 @@ export type ScoreInput = {
   taskCompletedCount?: number;
 };
 
+export type ScoreBreakdownItem = {
+  factor: string;
+  delta: number;
+  note: string;
+};
+
 export function calculateLeadScore(input: ScoreInput) {
   let score = 35;
   const reasons: string[] = [];
+  const breakdown: ScoreBreakdownItem[] = [];
+  const addFactor = (factor: string, delta: number, note: string) => {
+    if (delta === 0) return;
+    score += delta;
+    reasons.push(`${factor} ${delta >= 0 ? "+" : ""}${delta}`);
+    breakdown.push({ factor, delta, note });
+  };
   const text = `${input.notes ?? ""} ${(input.calls ?? [])
     .map((call) => `${call.outcome ?? ""} ${call.notes ?? ""} ${call.content ?? ""}`)
     .join(" ")}`.toLowerCase();
 
   if (input.email && input.phone) {
-    score += 5;
-    reasons.push("Good contact details +5");
+    addFactor("Good contact details", 5, "Lead has both email and phone captured.");
   }
   if (input.source && ["WEBSITE", "GOOGLE", "REFERRAL", "WHATSAPP"].includes(input.source.toUpperCase())) {
-    score += 8;
-    reasons.push("High-intent source +8");
+    addFactor("High-intent source", 8, "Source indicates active buying intent.");
   }
   if (input.priority === "HOT") {
-    score += 18;
-    reasons.push("Marked hot priority +18");
+    addFactor("Priority", 18, "Lead has been flagged as hot.");
   }
   if (text.includes("callback") || text.includes("call back")) {
-    score += 20;
-    reasons.push("Requested callback +20");
+    addFactor("Requested callback", 20, "Customer explicitly requested a call-back.");
   }
   if (text.includes("requirement") || text.includes("need") || text.includes("demo")) {
-    score += 15;
-    reasons.push("Confirmed requirement +15");
+    addFactor("Confirmed requirement", 15, "The customer has outlined a requirement or demo request.");
   }
   if (text.includes("budget") || text.includes("pricing")) {
-    score += 15;
-    reasons.push("Budget/pricing discussed +15");
+    addFactor("Budget discussed", 15, "Pricing or budget details are in the conversation history.");
   }
   if ((text.includes("interested") && !text.includes("not interested")) || input.status === "INTERESTED" || input.status === "QUALIFIED") {
-    score += 16;
-    reasons.push("High intent signal +16");
+    addFactor("High intent signal", 16, "Positive buying signals are present.");
   }
   if ((input.taskCompletedCount ?? 0) > 0) {
-    score += 8;
-    reasons.push("Responded to follow-up +8");
+    addFactor("Follow-up response", 8, "The lead has responded to a follow-up action.");
   }
   if (text.includes("not interested") || text.includes("negative")) {
-    score -= 10;
-    reasons.push("Negative sentiment -10");
+    addFactor("Negative sentiment", -10, "The customer expressed concern or disinterest.");
   }
   if (input.status === "INVALID" || text.includes("wrong number")) {
-    score -= 25;
-    reasons.push("Invalid contact signal -25");
+    addFactor("Invalid contact signal", -25, "Lead information is likely stale or invalid.");
   }
   if (input.status === "LOST") {
-    score -= 18;
-    reasons.push("Marked lost -18");
+    addFactor("Lost status", -18, "The lead has already been marked lost.");
   }
   if (input.status === "CONVERTED") {
     score = Math.max(score, 92);
-    reasons.push("Converted customer floor 92");
+    addFactor("Converted customer floor", 0, "Converted accounts receive a stable high score floor.");
   }
 
+  const normalizedScore = Math.max(0, Math.min(100, score));
+
   return {
-    score: Math.max(0, Math.min(100, score)),
-    reasons: reasons.length ? reasons : ["Base fit score +35"]
+    score: normalizedScore,
+    reasons: reasons.length ? reasons : ["Base fit score +35"],
+    breakdown: breakdown.length ? breakdown : [{ factor: "Base fit", delta: 35, note: "Default lead-fit baseline." }],
+    classification: normalizedScore >= 75 ? "HOT" : normalizedScore >= 45 ? "WARM" : "COLD"
   };
 }
 

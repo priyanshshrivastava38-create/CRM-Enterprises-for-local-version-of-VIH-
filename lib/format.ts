@@ -28,3 +28,18 @@ export function pct(numerator: number, denominator: number) {
   if (!denominator) return 0;
   return Math.round((numerator / denominator) * 100);
 }
+
+export function inr(value: number) {
+  return `₹${Math.round(value).toLocaleString("en-IN")}`;
+}
+
+/** Short Indian-notation currency for tiles and axes: ₹4.2K, ₹5.2L, ₹1.04Cr. */
+export function inrCompact(value: number) {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  const trim = (n: number, digits: number) => n.toFixed(digits).replace(/\.?0+$/, "");
+  if (abs >= 1e7) return `${sign}₹${trim(abs / 1e7, 2)}Cr`;
+  if (abs >= 1e5) return `${sign}₹${trim(abs / 1e5, 1)}L`;
+  if (abs >= 1e3) return `${sign}₹${trim(abs / 1e3, 1)}K`;
+  return `${sign}₹${Math.round(abs)}`;
+}

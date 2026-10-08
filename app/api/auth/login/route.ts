@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { createSessionToken, verifyPassword, SESSION_COOKIE, SESSION_TTL_SECONDS, DUMMY_PASSWORD_HASH, ensureDemoAccounts, normalizeEmail } from "@/lib/auth";
 import { DEMO_ACCOUNTS } from "@/lib/demo-accounts";
+import { landingPathForRole } from "@/components/shell/module-nav";
 
 export async function POST(request: Request) {
   let body: { email?: string; password?: string };
@@ -18,12 +19,12 @@ export async function POST(request: Request) {
   const normalizedEmail = normalizeEmail(body.email);
   try {
     const isDemoAccount = DEMO_ACCOUNTS.some((account) => account.email === normalizedEmail);
-    if (isDemoAccount) {
+    if (process.env.NODE_ENV !== "production" && isDemoAccount) {
       await ensureDemoAccounts();
     }
     let user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
 
-    if (!user) {
+    if (!user && process.env.NODE_ENV !== "production") {
       await ensureDemoAccounts();
       user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     }
@@ -37,18 +38,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
 
+    const host = request.headers.get("host") || "";
+    const isLocalhost = host.includes("localhost") || host.includes("127.0.0.1");
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE, createSessionToken(user.id), {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production" && !isLocalhost,
       path: "/",
       maxAge: SESSION_TTL_SECONDS
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, redirectTo: landingPathForRole(user.role) });
   } catch (error) {
     console.error("[auth] sign-in database error", error);
-    return NextResponse.json({ error: "Sign-in service unavailable. Check DATABASE_URL, SESSION_SECRET, and Prisma migrations." }, { status: 503 });
+    return NextResponse.json({ error: "Sign-in is temporarily unavailable. Please try again in a moment or contact your administrator." }, { status: 503 });
   }
 }

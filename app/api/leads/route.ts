@@ -94,7 +94,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "A lead with this email or phone already exists", lead: existing }, { status: 409 });
     }
 
-    let assignedTo = input.assignedTo ?? null;
+    let assignedTo = user.role === "SALES" ? user.id : input.assignedTo || null;
     if (!assignedTo) {
       const salesAgents = await prisma.user.findMany({
         where: { role: "SALES", active: true },

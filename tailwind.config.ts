@@ -15,23 +15,23 @@ const config: Config = {
         line: "var(--line)",
         panel: "var(--panel)",
         brand: {
-          50: "#eef5ff",
-          100: "#dfeafc",
-          200: "#bfd5ff",
-          300: "#8fb1ff",
-          400: "#5b87f6",
-          500: "#3563d9",
-          600: "#264bb3",
-          700: "#1d3d8a",
-          800: "#1b2e63",
-          900: "#172849"
+          50: "#edf8f2",
+          100: "#d8efe2",
+          200: "#b4dfc8",
+          300: "#80c7a4",
+          400: "#48aa7e",
+          500: "#16805b",
+          600: "#126848",
+          700: "#10543d",
+          800: "#114332",
+          900: "#123b2e"
         }
       },
       boxShadow: {
         soft: "0 22px 60px -18px rgba(15, 23, 42, 0.18)",
         card: "0 1px 0 rgba(15, 23, 42, 0.04), 0 10px 24px -18px rgba(15, 23, 42, 0.18)",
         "card-hover": "0 1px 0 rgba(15, 23, 42, 0.05), 0 18px 34px -20px rgba(15, 23, 42, 0.22)",
-        glow: "0 0 0 1px rgba(53, 99, 217, 0.12), 0 10px 26px -12px rgba(53, 99, 217, 0.32)"
+        glow: "0 0 0 1px rgba(22, 128, 91, 0.14), 0 10px 26px -12px rgba(22, 128, 91, 0.3)"
       },
       keyframes: {
         "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },

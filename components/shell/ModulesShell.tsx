@@ -1,30 +1,21 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-import { LayoutDashboard } from "lucide-react";
-import { Sidebar, type SidebarItem } from "@/components/shell/Sidebar";
-import { moduleNavForRole } from "@/components/shell/module-nav";
+import { Sidebar, type ShellUser } from "@/components/shell/Sidebar";
+import { TopBar } from "@/components/shell/TopBar";
+import { ShellUserProvider } from "@/components/shell/user-context";
 
-export function ModulesShell({ role, children }: { role: string; children: React.ReactNode }) {
-  const pathname = usePathname();
-
-  const items: SidebarItem[] = [
-    { kind: "link", label: "CRM Home", icon: LayoutDashboard, href: "/", active: pathname === "/" },
-    ...moduleNavForRole(role).map((item) => ({
-      kind: "link" as const,
-      label: item.label,
-      icon: item.icon,
-      href: item.href,
-      active: pathname === item.href || pathname.startsWith(`${item.href}/`)
-    }))
-  ];
-
+export function ModulesShell({ user, children }: { user: ShellUser; children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen bg-app-glow">
-      <Sidebar items={items} subtitle="Operations Console" />
-      <main className="min-w-0 flex-1 px-4 py-5 lg:px-6 lg:py-6">
-        <div className="mx-auto max-w-[1500px]">{children}</div>
-      </main>
-    </div>
+    <ShellUserProvider value={user}>
+      <div className="flex min-h-screen flex-col bg-app-glow lg:flex-row">
+        <Sidebar user={user} />
+        <div className="min-w-0 flex-1">
+          <TopBar role={user.role} />
+          <main className="px-4 py-5 lg:px-8 lg:py-7 print:p-0">
+            <div className="mx-auto max-w-[1440px]">{children}</div>
+          </main>
+        </div>
+      </div>
+    </ShellUserProvider>
   );
 }

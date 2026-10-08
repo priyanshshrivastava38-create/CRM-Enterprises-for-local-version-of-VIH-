@@ -60,6 +60,20 @@ Open `http://localhost:3000`.
 npm test
 ```
 
+## Production Deployment
+
+Production requires a managed PostgreSQL database, a unique long random `SESSION_SECRET`, and a hosting provider that can run the included Dockerfile. Set `DATABASE_URL`, `SESSION_SECRET`, and `APP_URL` in the host's secret/environment settings; do not copy `.env` into an image or commit it. The production login endpoint does not create demo users. Create the first production administrator through a controlled provisioning process before opening access.
+
+Build the image with `docker build -t vih-crm .`, push it to your container registry, then run the release migration command against the production database before rolling out the new image:
+
+```bash
+npx prisma migrate deploy
+```
+
+Run the image with the production environment variables and expose port `3000` behind the host's HTTPS load balancer. Configure the provider's health check against `/api/health` if available; otherwise use `/login`. Confirm database backups, TLS, log retention, and a tested restore process before onboarding real users. `npm run db:seed` is development/demo-only and deletes CRM data; never run it against production.
+
+The app includes HTTP security headers and sets session cookies as secure in production. Provider-specific deployment cannot be completed until the hosting target, production database, registry, and secrets are provisioned.
+
 ## Demo Users
 
 > These demo accounts are for local development and testing only. They must not be used in production.

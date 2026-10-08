@@ -4,30 +4,30 @@
 
 :root {
   color-scheme: light;
-  --app-bg: #eef2f9;
-  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(54, 103, 240, 0.07), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(124, 58, 237, 0.05), transparent 55%);
+  --app-bg: #f4f7f3;
+  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(22, 128, 91, 0.09), transparent 58%),
+    radial-gradient(900px 500px at 100% 0%, rgba(190, 143, 60, 0.055), transparent 55%);
   --surface: #ffffff;
-  --panel: #f6f8fc;
-  --ink: #151b2c;
-  --line: #e1e7f0;
-  --scrollbar-thumb: #c5cfdd;
-  --chart-grid: #e7ecf4;
-  --chart-text: #64748b;
+  --panel: #f2f6f1;
+  --ink: #17221c;
+  --line: #e1e9e1;
+  --scrollbar-thumb: #b8c9bd;
+  --chart-grid: #e4ebe3;
+  --chart-text: #68766d;
 }
 
 :root.dark {
   color-scheme: dark;
-  --app-bg: #090d17;
-  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(54, 103, 240, 0.16), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(124, 58, 237, 0.1), transparent 55%);
-  --surface: #111827;
-  --panel: #161f33;
-  --ink: #eef1f8;
-  --line: #262f45;
-  --scrollbar-thumb: #364058;
-  --chart-grid: #262f45;
-  --chart-text: #8b98b8;
+  --app-bg: #101713;
+  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(40, 160, 111, 0.13), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(190, 143, 60, 0.055), transparent 55%);
+  --surface: #171f1a;
+  --panel: #1d2821;
+  --ink: #edf4ee;
+  --line: #2b3930;
+  --scrollbar-thumb: #506457;
+  --chart-grid: #2b3930;
+  --chart-text: #a3b2a7;
 }
 
 * {
@@ -59,11 +59,11 @@ button {
 }
 
 ::selection {
-  background: rgba(54, 103, 240, 0.25);
+  background: rgba(22, 128, 91, 0.24);
 }
 
 :focus-visible {
-  outline: 2px solid rgba(54, 103, 240, 0.55);
+  outline: 2px solid rgba(22, 128, 91, 0.58);
   outline-offset: 2px;
   border-radius: 4px;
 }

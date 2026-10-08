@@ -3,6 +3,7 @@ import { startOfDay, endOfDay } from "date-fns";
 import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { pct } from "@/lib/format";
+import { lastMonths, sumByMonth } from "@/lib/dashboard-metrics";
 
 const statuses = ["NEW", "CONTACTED", "QUALIFIED", "INTERESTED", "FOLLOW_UP", "CONVERTED", "LOST"];
 const priorities = ["HOT", "WARM", "COLD"];
@@ -14,6 +15,7 @@ export async function GET() {
   const taskScope = user.role === "SALES" ? { assignedTo: user.id } : {};
   const today = new Date();
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  const months = lastMonths(today.toISOString().slice(0, 7), 6);
 
   const [
     total,
@@ -28,7 +30,8 @@ export async function GET() {
     tasks,
     overdue,
     hotUncontacted,
-    stale
+    stale,
+    leadsInWindow
   ] = await Promise.all([
     prisma.lead.count({ where: leadWhere }),
     prisma.lead.count({ where: { ...leadWhere, priority: "HOT" } }),
@@ -47,8 +50,13 @@ export async function GET() {
     }),
     prisma.task.count({ where: { ...taskScope, deletedAt: null, status: "OPEN", dueDate: { lt: startOfDay(today) } } }),
     prisma.lead.findFirst({ where: { ...leadWhere, priority: "HOT", lastContactedAt: null } }),
-    prisma.lead.findFirst({ where: { ...leadWhere, status: "NEW", createdAt: { lt: fortyEightHoursAgo } } })
+    prisma.lead.findFirst({ where: { ...leadWhere, status: "NEW", createdAt: { lt: fortyEightHoursAgo } } }),
+    prisma.lead.findMany({ where: { ...leadWhere, createdAt: { gte: months[0].start } }, select: { createdAt: true, status: true } })
   ]);
+
+  // Monthly cohorts: leads created in each month, and how many of that cohort have since converted.
+  const createdTrend = sumByMonth(leadsInWindow.map((lead) => ({ date: lead.createdAt, amount: 1 })), months);
+  const convertedTrend = sumByMonth(leadsInWindow.map((lead) => ({ date: lead.createdAt, amount: lead.status === "CONVERTED" ? 1 : 0 })), months);
 
   const statusCountMap = new Map(statusCounts.map((row) => [row.status as string, row._count._all]));
   const byStatus = statuses.map((status) => ({ name: status.replace("_", " "), value: statusCountMap.get(status) ?? 0 }));
@@ -100,8 +108,10 @@ export async function GET() {
       hot,
       followUpsDue: tasks.length,
       converted,
-      conversionRate: pct(converted, total)
+      conversionRate: pct(converted, total),
+      overdueTasks: overdue
     },
+    trend: months.map((month, index) => ({ month: month.key, label: month.label, created: createdTrend[index], converted: convertedTrend[index] })),
     byStatus,
     bySource,
     byPriority,

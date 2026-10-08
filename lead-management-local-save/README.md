@@ -62,15 +62,16 @@ npm test
 
 ## Demo Users
 
-All demo users use password `Vih@12345`.
+> These demo accounts are for local development and testing only. They must not be used in production.
 
-| Email | Role |
-|---|---|
-| `admin@vihmetaverse.com` | Admin |
-| `sales1@vihmetaverse.com`, `sales2@vihmetaverse.com`, `sales3@vihmetaverse.com` | Sales |
-| `ceo@vihmetaverse.com` | CEO / Authorized Approver |
-| `finance@vihmetaverse.com` | Accounts / Finance |
-| `ops@vihmetaverse.com` | Technical / Operations |
+All demo users use password `ViH@Demo2026!`.
+
+| Role | Email | Password |
+|---|---|---|
+| Sales | `vih.sales@vih.demo` | `ViH@Demo2026!` |
+| CEO | `vih.ceo@vih.demo` | `ViH@Demo2026!` |
+| Finance | `vih.finance@vih.demo` | `ViH@Demo2026!` |
+| Tech | `vih.tech@vih.demo` | `ViH@Demo2026!` |
 
 ## Modules
 

@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, Building2, ArrowRight } from "lucide-react";
+import { Plus, Building2, ArrowRight, Columns3, List, MessagesSquare } from "lucide-react";
+import { DealBoard } from "@/components/opportunities/DealBoard";
 import { Card, Badge, Title, Input, Textarea, Select, Info, Empty, LoadingGrid, Modal, Drawer, primaryBtnClass, secondaryBtnClass } from "@/components/shared/ui";
 import { dateLabel, titleCase } from "@/lib/format";
+import { DateField } from "@/components/shared/DateField";
 
 type UserRef = { id: string; name: string; role?: string };
 type Requirement = { id?: string; service: string; expectedMonthlyVolume: number; notes?: string | null };
@@ -77,6 +79,7 @@ export default function OpportunitiesPage() {
   const [forbidden, setForbidden] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
+  const [view, setView] = useState<"board" | "list">("board");
   const [createMode, setCreateMode] = useState<"new" | "fromLead">("new");
   const [form, setForm] = useState(emptyOpportunityForm);
   const [convertForm, setConvertForm] = useState(emptyConvertForm);
@@ -85,12 +88,39 @@ export default function OpportunitiesPage() {
   const [formError, setFormError] = useState("");
 
   const [selected, setSelected] = useState<Opportunity | null>(null);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("vih_opportunity_view") === "list") setView("list");
+    } catch {
+      // Board stays the default when storage is unavailable.
+    }
+  }, []);
+
+  function changeView(next: "board" | "list") {
+    setView(next);
+    setPage(1);
+    try {
+      localStorage.setItem("vih_opportunity_view", next);
+    } catch {
+      // The choice still applies for this visit.
+    }
+  }
+
+  // "Create → Opportunity" links here with ?create=1; deal links shared in Messages use ?open=<id>.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("create")) setShowCreate(true);
+    const openId = params.get("open");
+    if (openId) void openOpportunity(openId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [noteText, setNoteText] = useState("");
   const [docForm, setDocForm] = useState({ title: "", url: "" });
   const [lostReason, setLostReason] = useState("");
   const [showLostForm, setShowLostForm] = useState(false);
 
-  const salesUsers = useMemo(() => users.filter((u) => u.role === "SALES" || u.role === "ADMIN"), [users]);
+  const salesUsers = useMemo(() => users.filter((u) => u.role === "SALES" || u.role === "CEO" || u.role === "ADMIN"), [users]);
 
   async function loadUsers() {
     const res = await fetch("/api/bootstrap");
@@ -103,9 +133,10 @@ export default function OpportunitiesPage() {
 
   async function loadOpportunities() {
     setLoading(true);
-    const params = new URLSearchParams({ page: String(page), pageSize: "25" });
+    // The board shows every stage at once, so it loads all deals (up to 100) and ignores the status filter.
+    const params = new URLSearchParams(view === "board" ? { page: "1", pageSize: "100" } : { page: String(page), pageSize: "25" });
     if (filters.q) params.set("q", filters.q);
-    if (filters.status !== "ALL") params.set("status", filters.status);
+    if (view === "list" && filters.status !== "ALL") params.set("status", filters.status);
     const res = await fetch(`/api/opportunities?${params.toString()}`);
     if (res.status === 403) {
       setForbidden(true);
@@ -131,7 +162,7 @@ export default function OpportunitiesPage() {
 
   useEffect(() => {
     loadOpportunities();
-  }, [page, filters.status]);
+  }, [page, filters.status, view]);
 
   async function openOpportunity(id: string) {
     const res = await fetch(`/api/opportunities/${id}`);
@@ -246,6 +277,20 @@ export default function OpportunitiesPage() {
         title="Opportunities"
         subtitle="Manage customers from first enquiry through to onboarding-ready."
         action={
+          <div className="flex items-center gap-2">
+          <div role="group" aria-label="View" className="inline-flex rounded-xl border border-line bg-surface p-1">
+            {([["board", Columns3, "Board"], ["list", List, "List"]] as const).map(([value, Icon, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => changeView(value)}
+                aria-pressed={view === value}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${view === value ? "bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300" : "text-slate-500 hover:text-ink dark:text-slate-400"}`}
+              >
+                <Icon size={15} aria-hidden="true" /> {label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => {
               setShowCreate(true);
@@ -256,13 +301,14 @@ export default function OpportunitiesPage() {
           >
             <Plus size={16} /> New Opportunity
           </button>
+          </div>
         }
       />
 
       <Card>
         <div className="grid gap-3 sm:grid-cols-3">
           <Input label="Search" value={filters.q} onChange={(v) => setFilters({ ...filters, q: v })} placeholder="Name, company, email" />
-          <Select label="Status" value={filters.status} onChange={(v) => setFilters({ ...filters, status: v })} options={["ALL", ...statuses]} render={(v) => (v === "ALL" ? "All" : titleCase(v))} />
+          {view === "list" ? <Select label="Status" value={filters.status} onChange={(v) => setFilters({ ...filters, status: v })} options={["ALL", ...statuses]} render={(v) => (v === "ALL" ? "All" : titleCase(v))} /> : null}
           <div className="flex items-end">
             <button onClick={() => (page === 1 ? loadOpportunities() : setPage(1))} className={`${secondaryBtnClass}`}>
               Apply
@@ -271,8 +317,10 @@ export default function OpportunitiesPage() {
         </div>
       </Card>
 
-      {loading ? (
+      {loading && !(view === "board" && opportunities.length) ? (
         <LoadingGrid />
+      ) : view === "board" ? (
+        <DealBoard deals={opportunities} canEdit={me?.role === "SALES" || me?.role === "CEO" || me?.role === "ADMIN"} onOpen={openOpportunity} onChanged={loadOpportunities} />
       ) : opportunities.length === 0 ? (
         <Card>
           <Empty label="No opportunities yet. Create one, or convert a lead." />
@@ -350,7 +398,7 @@ export default function OpportunitiesPage() {
                 <Input label="Contact Phone" value={form.contactPhone} onChange={(v) => setForm({ ...form, contactPhone: v })} required />
                 <Input label="GST Number" value={form.gstNumber} onChange={(v) => setForm({ ...form, gstNumber: v })} />
                 <Input label="Billing Address" value={form.billingAddress} onChange={(v) => setForm({ ...form, billingAddress: v })} />
-                <Input label="Expected Start Date" type="date" value={form.expectedStartDate} onChange={(v) => setForm({ ...form, expectedStartDate: v })} />
+                <DateField label="Expected Start Date" mode="date" value={form.expectedStartDate} onChange={(v) => setForm({ ...form, expectedStartDate: v })} />
                 <Input label="Opportunity Value (₹)" type="number" value={form.opportunityValue} onChange={(v) => setForm({ ...form, opportunityValue: v })} required />
                 <Select label="Sales Owner" value={form.salesOwnerId} onChange={(v) => setForm({ ...form, salesOwnerId: v })} options={salesUsers.map((u) => u.id)} render={(id) => salesUsers.find((u) => u.id === id)?.name ?? "Select"} />
               </div>
@@ -373,7 +421,7 @@ export default function OpportunitiesPage() {
               />
               <div className="grid gap-3 sm:grid-cols-2">
                 <Input label="Opportunity Value (₹)" type="number" value={convertForm.opportunityValue} onChange={(v) => setConvertForm({ ...convertForm, opportunityValue: v })} required />
-                <Input label="Expected Start Date" type="date" value={convertForm.expectedStartDate} onChange={(v) => setConvertForm({ ...convertForm, expectedStartDate: v })} />
+                <DateField label="Expected Start Date" mode="date" value={convertForm.expectedStartDate} onChange={(v) => setConvertForm({ ...convertForm, expectedStartDate: v })} />
               </div>
               <RequirementsEditor requirements={convertForm.requirements} onChange={(reqs) => setConvertForm({ ...convertForm, requirements: reqs })} />
               <button disabled={busy} className={`w-full ${primaryBtnClass}`}>
@@ -395,6 +443,21 @@ export default function OpportunitiesPage() {
                 </Link>
               ) : null}
               {selected.lead ? <span className="text-xs text-slate-500 dark:text-slate-400">From lead: {selected.lead.firstName} {selected.lead.lastName}</span> : null}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {[
+                ["FINANCE", "Discuss with Finance"],
+                ["SALES", "Discuss with Sales"]
+              ].map(([team, label]) => (
+                <Link
+                  key={team}
+                  href={`/messages?team=${team}&recordType=opportunity&recordId=${selected.id}&recordLabel=${encodeURIComponent(`${selected.companyName} · ₹${Number(selected.opportunityValue).toLocaleString("en-IN")} · ${titleCase(selected.status)}`)}`}
+                  className={`flex items-center gap-1.5 ${secondaryBtnClass}`}
+                >
+                  <MessagesSquare size={15} aria-hidden="true" /> {label}
+                </Link>
+              ))}
             </div>
 
             <Card>

@@ -2,6 +2,9 @@ import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  // The floating dev badge sits on top of the sidebar profile; hide it.
+  devIndicators: false,
   outputFileTracingRoot: path.join(__dirname),
   experimental: {
     serverActions: {

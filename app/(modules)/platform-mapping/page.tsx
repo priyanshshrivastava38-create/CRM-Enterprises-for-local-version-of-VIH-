@@ -65,6 +65,14 @@ export default function PlatformMappingPage() {
 
   async function createAccount(event: React.FormEvent) {
     event.preventDefault();
+    if (!form.customerId) {
+      setFormError("Select a customer before creating a platform mapping.");
+      return;
+    }
+    if (!form.providerName.trim() || !form.externalAccountId.trim()) {
+      setFormError("Enter both a provider name and external account ID.");
+      return;
+    }
     setBusy(true);
     setFormError("");
     const res = await fetch("/api/platform-accounts", {
@@ -160,17 +168,22 @@ export default function PlatformMappingPage() {
               label="Customer"
               value={form.customerId}
               onChange={(v) => setForm({ ...form, customerId: v })}
-              options={["", ...customers.map((c) => c.id)]}
+              options={customers.map((c) => c.id)}
               render={(id) => {
                 const c = customers.find((c) => c.id === id);
                 return c ? `${c.customerCode} — ${c.name}` : "Select a customer";
               }}
             />
+            {customers.length === 0 ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                No customers are available to map yet. Complete a price approval to create a customer, then return here to connect its platform account.
+              </p>
+            ) : null}
             <Select label="Service" value={form.service} onChange={(v) => setForm({ ...form, service: v })} options={services} render={titleCase} />
             <Input label="Provider Name" value={form.providerName} onChange={(v) => setForm({ ...form, providerName: v })} placeholder="e.g. Karix SMS Gateway" required />
             <Input label="External Account ID" value={form.externalAccountId} onChange={(v) => setForm({ ...form, externalAccountId: v })} placeholder="e.g. ABC123 or WABA-78945" required />
-            <button disabled={busy} className={`w-full ${primaryBtnClass}`}>
-              {busy ? "Saving..." : "Create Mapping"}
+            <button disabled={busy || customers.length === 0 || !form.customerId} className={`w-full ${primaryBtnClass}`}>
+              {busy ? "Saving..." : customers.length === 0 ? "No customers to map" : "Create Mapping"}
             </button>
           </form>
         </Modal>

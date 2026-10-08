@@ -15,23 +15,23 @@ const config: Config = {
         line: "var(--line)",
         panel: "var(--panel)",
         brand: {
-          50: "#eff5ff",
-          100: "#dce9ff",
-          200: "#b8d1ff",
-          300: "#89b3ff",
-          400: "#5b8fff",
-          500: "#3667f0",
-          600: "#2648d6",
-          700: "#1f39ab",
-          800: "#1c2f85",
-          900: "#182860"
+          50: "#edf8f2",
+          100: "#d8efe2",
+          200: "#b4dfc8",
+          300: "#80c7a4",
+          400: "#48aa7e",
+          500: "#16805b",
+          600: "#126848",
+          700: "#10543d",
+          800: "#114332",
+          900: "#123b2e"
         }
       },
       boxShadow: {
-        soft: "0 24px 70px -12px rgba(15, 23, 42, 0.16)",
-        card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 28px -14px rgba(15, 23, 42, 0.14)",
-        "card-hover": "0 1px 2px rgba(15, 23, 42, 0.06), 0 20px 40px -12px rgba(15, 23, 42, 0.2)",
-        glow: "0 0 0 1px rgba(54, 103, 240, 0.15), 0 8px 24px -6px rgba(54, 103, 240, 0.35)"
+        soft: "0 22px 60px -18px rgba(15, 23, 42, 0.18)",
+        card: "0 1px 0 rgba(15, 23, 42, 0.04), 0 10px 24px -18px rgba(15, 23, 42, 0.18)",
+        "card-hover": "0 1px 0 rgba(15, 23, 42, 0.05), 0 18px 34px -20px rgba(15, 23, 42, 0.22)",
+        glow: "0 0 0 1px rgba(22, 128, 91, 0.14), 0 10px 26px -12px rgba(22, 128, 91, 0.3)"
       },
       keyframes: {
         "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },

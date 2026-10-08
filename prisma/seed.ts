@@ -3,6 +3,11 @@ import { DEMO_ACCOUNTS } from "../lib/demo-accounts";
 import { hashPassword } from "../lib/auth";
 import { calculateLeadScore, priorityFromScore } from "../lib/scoring";
 import { approvePriceRequest } from "../lib/workflows/approve-price-request";
+import { runBillingForCustomer } from "../lib/workflows/run-billing";
+import { finalizeBillingRun } from "../lib/workflows/finalize-billing-run";
+import { getOrCreateReconciliation } from "../lib/workflows/reconcile-billing-run";
+import { seedHistory } from "./seed-history";
+import { seedMessages } from "./seed-messages";
 
 const prisma = new PrismaClient();
 
@@ -60,11 +65,16 @@ async function main() {
   await prisma.opportunityDocument.deleteMany();
   await prisma.opportunityRequirement.deleteMany();
   await prisma.opportunity.deleteMany();
+  await prisma.message.deleteMany();
+  await prisma.conversationParticipant.deleteMany();
+  await prisma.conversation.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.activity.deleteMany();
   await prisma.call.deleteMany();
   await prisma.task.deleteMany();
   await prisma.lead.deleteMany();
+  await prisma.contact.deleteMany();
+  await prisma.organization.deleteMany();
   await prisma.campaign.deleteMany();
   await prisma.user.deleteMany({ where: { email: { in: demoEmails } } });
 
@@ -124,11 +134,44 @@ async function main() {
     )
   );
 
+  const organizations = await Promise.all(
+    companies.map((name, index) =>
+      prisma.organization.create({
+        data: {
+          name,
+          industry: pick(["Logistics", "Retail", "Financial Services", "Healthcare", "Education", "Technology", "Transportation", "Food & Beverage", "Real Estate", "Banking"], index),
+          website: `https://www.${name.toLowerCase().replace(/[^a-z0-9]+/g, "")}.in`,
+          city: pick(cities, index),
+          country: "India",
+          phone: `+91 80${String(41000000 + index * 13791).slice(0, 8)}`,
+          email: `hello@${name.toLowerCase().replace(/[^a-z0-9]+/g, "")}.in`,
+          tags: [index % 2 === 0 ? "Enterprise" : "Mid-market", index % 3 === 0 ? "Priority" : "Prospect"],
+          contacts: {
+            create: {
+              firstName: pick(firstNames, index + 10),
+              lastName: pick(lastNames, index + 4),
+              email: `contact${index + 1}@${name.toLowerCase().replace(/[^a-z0-9]+/g, "")}.in`,
+              phone: `+91 98${String(10000000 + index * 19371).slice(0, 8)}`,
+              jobTitle: pick(["Founder", "Marketing Head", "Sales Director", "Operations Lead", "Finance Controller"], index),
+              department: pick(["Leadership", "Marketing", "Sales", "Operations", "Finance"], index),
+              city: pick(cities, index),
+              country: "India",
+              notes: "Primary business contact for messaging platform evaluation."
+            }
+          }
+        },
+        include: { contacts: true }
+      })
+    )
+  );
+  const organizationsByName = new Map(organizations.map((organization) => [organization.name, organization]));
+
   for (let index = 0; index < 72; index++) {
     const firstName = pick(firstNames, index);
     const lastName = pick(lastNames, index * 3);
     const status = pick(statuses, index);
     const note = pick(notes, index);
+    const organization = organizationsByName.get(pick(companies, index));
     const base = {
       firstName,
       lastName,
@@ -148,6 +191,8 @@ async function main() {
         priority: priorityFromScore(scoreResult.score),
         score: scoreResult.score,
         assignedTo: sales.id,
+        organizationId: organization?.id,
+        contactId: organization?.contacts[0]?.id,
         campaignId: campaigns[index % campaigns.length].id,
         nextFollowUpAt: addDays((index % 9) - 3),
         lastContactedAt: ["CONTACTED", "QUALIFIED", "INTERESTED", "FOLLOW_UP", "CONVERTED"].includes(status) ? addDays(-1 - (index % 6)) : null,
@@ -332,6 +377,34 @@ async function main() {
     ]
   });
 
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+  const currentMonthBatch = await prisma.usageImportBatch.create({
+    data: { uploadedById: operations.id, service: "SMS", status: "COMPLETED", rowCount: 4, successCount: 4, errorCount: 0 }
+  });
+  await prisma.usageRecord.createMany({
+    data: [
+      { importBatchId: currentMonthBatch.id, platformAccountId: smsAccount.id, service: "SMS", component: "SUBMITTED", usageDate: now, quantity: 1250000, sourceReference: "demo-current-submitted" },
+      { importBatchId: currentMonthBatch.id, platformAccountId: smsAccount.id, service: "SMS", component: "DELIVERED", usageDate: now, quantity: 980000, sourceReference: "demo-current-delivered" },
+      { importBatchId: currentMonthBatch.id, platformAccountId: wabaAccount.id, service: "WHATSAPP", component: "MARKETING", usageDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 4)), quantity: 64000, sourceReference: "demo-current-marketing" },
+      { importBatchId: currentMonthBatch.id, platformAccountId: wabaAccount.id, service: "WHATSAPP", component: "UTILITY", usageDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 5)), quantity: 42000, sourceReference: "demo-current-utility" }
+    ]
+  });
+  const billingRun = await runBillingForCustomer(approved.customerId, monthStart, monthEnd);
+  await getOrCreateReconciliation(billingRun.id);
+  const invoice = await finalizeBillingRun(billingRun.id, finance.id);
+  await prisma.payment.create({
+    data: {
+      invoiceId: invoice.id,
+      amount: Math.round(Number(invoice.totalAmount) * 0.35 * 100) / 100,
+      paidOn: new Date(),
+      method: "BANK_TRANSFER",
+      reference: "DEMO-NEFT-2026-1042",
+      recordedById: finance.id
+    }
+  });
+
   const oppPending = await prisma.opportunity.create({
     data: {
       name: "QuickCart Online — Messaging Services",
@@ -477,7 +550,10 @@ async function main() {
     });
   }
 
-  console.log("Seeded ViH CRM demo data (leads, tasks, calls, campaigns, 5-role users).");
+  await seedHistory(prisma, { sales, ceo, finance, operations });
+  await seedMessages(prisma, { sales, ceo, finance, operations, admin });
+
+  console.log("Seeded ViH CRM demo data (leads, tasks, calls, campaigns, 5-role users, 6 months of billing history).");
 }
 
 main()

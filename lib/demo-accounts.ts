@@ -10,6 +10,7 @@ export const DEMO_ACCOUNTS: Array<{
   name: string;
   role: Role;
 }> = [
+  { roleLabel: "Admin", email: "admin@vihmetaverse.com", password: DEMO_PASSWORD, name: "ViH Admin", role: "ADMIN" },
   { roleLabel: "Sales", email: "vih.sales@vih.demo", password: DEMO_PASSWORD, name: "ViH Sales User", role: "SALES" },
   { roleLabel: "CEO", email: "vih.ceo@vih.demo", password: DEMO_PASSWORD, name: "ViH CEO", role: "CEO" },
   { roleLabel: "Finance", email: "vih.finance@vih.demo", password: DEMO_PASSWORD, name: "ViH Finance User", role: "FINANCE" },

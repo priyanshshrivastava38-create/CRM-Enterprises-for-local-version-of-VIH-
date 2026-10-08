@@ -13,6 +13,10 @@ enum Role {
   CEO
   FINANCE
   OPERATIONS
+  REGIONAL_SALES_HEAD
+  CFO
+  CTO
+  CSO
 }
 
 enum LeadStatus {
@@ -219,37 +223,40 @@ model User {
   adjustmentsRequested     Adjustment[]
   paymentsRecorded         Payment[]
 
+  messages                 Message[]
+  conversationParticipants ConversationParticipant[]
+
   @@map("users")
 }
 
 model Lead {
-  id              String       @id @default(cuid())
-  firstName       String       @map("first_name")
-  lastName        String       @map("last_name")
+  id              String        @id @default(cuid())
+  firstName       String        @map("first_name")
+  lastName        String        @map("last_name")
   email           String
   phone           String
   company         String
   designation     String?
   city            String?
   source          String
-  status          LeadStatus   @default(NEW)
-  priority        Priority     @default(WARM)
-  score           Int          @default(45)
-  assignedTo      String?      @map("assigned_to")
-  organizationId  String?      @map("organization_id")
-  contactId       String?      @map("contact_id")
+  status          LeadStatus    @default(NEW)
+  priority        Priority      @default(WARM)
+  score           Int           @default(45)
+  assignedTo      String?       @map("assigned_to")
+  organizationId  String?       @map("organization_id")
+  contactId       String?       @map("contact_id")
   notes           String?
-  nextFollowUpAt  DateTime?    @map("next_follow_up_at")
-  lastContactedAt DateTime?    @map("last_contacted_at")
-  lostReason      String?      @map("lost_reason")
-  campaignId      String?      @map("campaign_id")
-  deletedAt       DateTime?    @map("deleted_at")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
-  assignedUser    User?        @relation("LeadAssignee", fields: [assignedTo], references: [id])
-  campaign        Campaign?    @relation(fields: [campaignId], references: [id])
+  nextFollowUpAt  DateTime?     @map("next_follow_up_at")
+  lastContactedAt DateTime?     @map("last_contacted_at")
+  lostReason      String?       @map("lost_reason")
+  campaignId      String?       @map("campaign_id")
+  deletedAt       DateTime?     @map("deleted_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  assignedUser    User?         @relation("LeadAssignee", fields: [assignedTo], references: [id])
+  campaign        Campaign?     @relation(fields: [campaignId], references: [id])
   organization    Organization? @relation("LeadOrganization", fields: [organizationId], references: [id], onDelete: SetNull)
-  contact         Contact?     @relation("LeadContact", fields: [contactId], references: [id], onDelete: SetNull)
+  contact         Contact?      @relation("LeadContact", fields: [contactId], references: [id], onDelete: SetNull)
   tasks           Task[]
   calls           Call[]
   activities      Activity[]
@@ -268,42 +275,42 @@ model Lead {
 }
 
 model Organization {
-  id          String    @id @default(cuid())
-  name        String
-  industry    String?
-  website     String?
-  city        String?
-  country     String?
-  phone       String?
-  email       String?
-  tags        String[]  @default([])
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  contacts    Contact[]
-  leads       Lead[]    @relation("LeadOrganization")
-  activities  Activity[] @relation("OrganizationActivity")
+  id         String     @id @default(cuid())
+  name       String
+  industry   String?
+  website    String?
+  city       String?
+  country    String?
+  phone      String?
+  email      String?
+  tags       String[]   @default([])
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+  contacts   Contact[]
+  leads      Lead[]     @relation("LeadOrganization")
+  activities Activity[] @relation("OrganizationActivity")
 
   @@index([name])
   @@map("organizations")
 }
 
 model Contact {
-  id             String       @id @default(cuid())
-  firstName      String       @map("first_name")
-  lastName       String       @map("last_name")
+  id             String        @id @default(cuid())
+  firstName      String        @map("first_name")
+  lastName       String        @map("last_name")
   email          String?
   phone          String?
-  jobTitle       String?      @map("job_title")
+  jobTitle       String?       @map("job_title")
   department     String?
-  organizationId String?      @map("organization_id")
+  organizationId String?       @map("organization_id")
   city           String?
   country        String?
   notes          String?
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  leads          Lead[]       @relation("LeadContact")
-  activities     Activity[]   @relation("ContactActivity")
+  leads          Lead[]        @relation("LeadContact")
+  activities     Activity[]    @relation("ContactActivity")
 
   @@index([organizationId])
   @@index([email])
@@ -368,23 +375,23 @@ model Campaign {
 }
 
 model Activity {
-  id            String       @id @default(cuid())
-  leadId        String?      @map("lead_id")
-  opportunityId String?      @map("opportunity_id")
-  customerId    String?      @map("customer_id")
-  contactId     String?      @map("contact_id")
-  organizationId String?     @map("organization_id")
-  userId        String?      @map("user_id")
-  activityType  String       @map("activity_type")
-  description   String
-  metadata      Json?
-  createdAt     DateTime     @default(now()) @map("created_at")
-  lead          Lead?        @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  contact       Contact?     @relation("ContactActivity", fields: [contactId], references: [id], onDelete: Cascade)
-  organization  Organization? @relation("OrganizationActivity", fields: [organizationId], references: [id], onDelete: Cascade)
-  user          User?        @relation(fields: [userId], references: [id])
+  id             String        @id @default(cuid())
+  leadId         String?       @map("lead_id")
+  opportunityId  String?       @map("opportunity_id")
+  customerId     String?       @map("customer_id")
+  contactId      String?       @map("contact_id")
+  organizationId String?       @map("organization_id")
+  userId         String?       @map("user_id")
+  activityType   String        @map("activity_type")
+  description    String
+  metadata       Json?
+  createdAt      DateTime      @default(now()) @map("created_at")
+  lead           Lead?         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  opportunity    Opportunity?  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contact        Contact?      @relation("ContactActivity", fields: [contactId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation("OrganizationActivity", fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User?         @relation(fields: [userId], references: [id])
 
   @@index([createdAt])
   @@index([contactId])
@@ -422,7 +429,7 @@ model Opportunity {
   billingAddress    String?           @map("billing_address")
   gstNumber         String?           @map("gst_number")
   expectedStartDate DateTime?         @map("expected_start_date")
-  opportunityValue  Decimal           @db.Decimal(14, 2) @map("opportunity_value")
+  opportunityValue  Decimal           @map("opportunity_value") @db.Decimal(14, 2)
   status            OpportunityStatus @default(NEW)
   lostReason        String?           @map("lost_reason")
   salesOwnerId      String            @map("sales_owner_id")
@@ -430,8 +437,8 @@ model Opportunity {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  lead           Lead?                     @relation(fields: [leadId], references: [id])
-  salesOwner     User                      @relation("OpportunitySalesOwner", fields: [salesOwnerId], references: [id])
+  lead           Lead?                    @relation(fields: [leadId], references: [id])
+  salesOwner     User                     @relation("OpportunitySalesOwner", fields: [salesOwnerId], references: [id])
   requirements   OpportunityRequirement[]
   documents      OpportunityDocument[]
   priceApprovals PriceApprovalRequest[]
@@ -481,11 +488,11 @@ model PriceApprovalRequest {
   requestedById          String              @map("requested_by_id")
   status                 PriceApprovalStatus @default(DRAFT)
   proposedEffectiveDate  DateTime            @map("proposed_effective_date")
-  setupCost              Decimal?            @db.Decimal(14, 2) @map("setup_cost")
+  setupCost              Decimal?            @map("setup_cost") @db.Decimal(14, 2)
   paymentTerms           String?             @map("payment_terms")
   commercialTerms        String?             @map("commercial_terms")
-  expectedMonthlyRevenue Decimal?            @db.Decimal(14, 2) @map("expected_monthly_revenue")
-  expectedMarginPct      Decimal?            @db.Decimal(5, 2) @map("expected_margin_pct")
+  expectedMonthlyRevenue Decimal?            @map("expected_monthly_revenue") @db.Decimal(14, 2)
+  expectedMarginPct      Decimal?            @map("expected_margin_pct") @db.Decimal(5, 2)
   reason                 String?
   reviewedById           String?             @map("reviewed_by_id")
   reviewedAt             DateTime?           @map("reviewed_at")
@@ -510,7 +517,7 @@ model PriceApprovalLineItem {
   service        ServiceType
   component      String
   rateType       RateType
-  flatRate       Decimal?    @db.Decimal(10, 4) @map("flat_rate")
+  flatRate       Decimal?    @map("flat_rate") @db.Decimal(10, 4)
   expectedVolume Int?        @map("expected_volume")
   billingMetric  String      @default("PER_UNIT") @map("billing_metric")
   sortOrder      Int         @default(0) @map("sort_order")
@@ -594,7 +601,7 @@ model RatePlanLineItem {
   service       ServiceType
   component     String
   rateType      RateType
-  flatRate      Decimal?    @db.Decimal(10, 4) @map("flat_rate")
+  flatRate      Decimal?    @map("flat_rate") @db.Decimal(10, 4)
   billingMetric String      @default("PER_UNIT") @map("billing_metric")
   sortOrder     Int         @default(0) @map("sort_order")
 
@@ -755,10 +762,10 @@ model BillingRun {
   periodStart           DateTime         @map("period_start")
   periodEnd             DateTime         @map("period_end")
   status                BillingRunStatus @default(DRAFT)
-  totalUsageAmount      Decimal          @default(0) @db.Decimal(14, 2) @map("total_usage_amount")
-  totalSetupAmount      Decimal          @default(0) @db.Decimal(14, 2) @map("total_setup_amount")
-  totalAdjustmentAmount Decimal          @default(0) @db.Decimal(14, 2) @map("total_adjustment_amount")
-  totalAmount           Decimal          @default(0) @db.Decimal(14, 2) @map("total_amount")
+  totalUsageAmount      Decimal          @default(0) @map("total_usage_amount") @db.Decimal(14, 2)
+  totalSetupAmount      Decimal          @default(0) @map("total_setup_amount") @db.Decimal(14, 2)
+  totalAdjustmentAmount Decimal          @default(0) @map("total_adjustment_amount") @db.Decimal(14, 2)
+  totalAmount           Decimal          @default(0) @map("total_amount") @db.Decimal(14, 2)
   calculatedAt          DateTime?        @map("calculated_at")
   finalizedAt           DateTime?        @map("finalized_at")
   finalizedById         String?          @map("finalized_by_id")
@@ -801,7 +808,7 @@ model BillingLineItem {
   component        String
   billableQuantity Int         @map("billable_quantity")
   rateType         RateType    @map("rate_type")
-  appliedRate      Decimal     @db.Decimal(10, 4) @map("applied_rate")
+  appliedRate      Decimal     @map("applied_rate") @db.Decimal(10, 4)
   slabLabel        String?     @map("slab_label")
   amount           Decimal     @db.Decimal(14, 2)
   sortOrder        Int         @default(0) @map("sort_order")
@@ -818,7 +825,7 @@ model Reconciliation {
   totalRawQuantity      Int                  @map("total_raw_quantity")
   totalBillableQuantity Int                  @map("total_billable_quantity")
   varianceQuantity      Int                  @map("variance_quantity")
-  varianceAmount        Decimal              @db.Decimal(14, 2) @map("variance_amount")
+  varianceAmount        Decimal              @map("variance_amount") @db.Decimal(14, 2)
   reviewedById          String?              @map("reviewed_by_id")
   reviewedAt            DateTime?            @map("reviewed_at")
   notes                 String?
@@ -839,8 +846,8 @@ model Adjustment {
   type             AdjustmentType
   scope            AdjustmentScope
   relatedComponent String?         @map("related_component")
-  oldValue         Decimal?        @db.Decimal(14, 2) @map("old_value")
-  newValue         Decimal?        @db.Decimal(14, 2) @map("new_value")
+  oldValue         Decimal?        @map("old_value") @db.Decimal(14, 2)
+  newValue         Decimal?        @map("new_value") @db.Decimal(14, 2)
   amount           Decimal         @db.Decimal(14, 2)
   reason           String
   requestedById    String          @map("requested_by_id")
@@ -863,9 +870,9 @@ model Invoice {
   issueDate        DateTime      @map("issue_date")
   dueDate          DateTime      @map("due_date")
   subtotal         Decimal       @db.Decimal(14, 2)
-  setupCharges     Decimal       @default(0) @db.Decimal(14, 2) @map("setup_charges")
-  adjustmentsTotal Decimal       @default(0) @db.Decimal(14, 2) @map("adjustments_total")
-  totalAmount      Decimal       @db.Decimal(14, 2) @map("total_amount")
+  setupCharges     Decimal       @default(0) @map("setup_charges") @db.Decimal(14, 2)
+  adjustmentsTotal Decimal       @default(0) @map("adjustments_total") @db.Decimal(14, 2)
+  totalAmount      Decimal       @map("total_amount") @db.Decimal(14, 2)
   status           InvoiceStatus @default(DRAFT)
   exportedAt       DateTime?     @map("exported_at")
   createdAt        DateTime      @default(now()) @map("created_at")
@@ -910,4 +917,57 @@ model Payment {
   recordedBy User    @relation(fields: [recordedById], references: [id])
 
   @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Internal team messaging: team channels (membership derived from role) and direct messages.
+
+enum ConversationKind {
+  TEAM
+  DIRECT
+}
+
+model Conversation {
+  id            String                    @id @default(cuid())
+  // Stable lookup key: "team:FINANCE" for channels, "dm:<userIdA>:<userIdB>" (sorted) for direct messages.
+  key           String                    @unique
+  kind          ConversationKind
+  team          String?
+  createdAt     DateTime                  @default(now()) @map("created_at")
+  lastMessageAt DateTime?                 @map("last_message_at")
+  participants  ConversationParticipant[]
+  messages      Message[]
+
+  @@map("conversations")
+}
+
+// Direct-message membership, and per-user read position for every conversation the user has opened.
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String       @map("conversation_id")
+  userId         String       @map("user_id")
+  lastReadAt     DateTime?    @map("last_read_at")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String       @map("conversation_id")
+  authorId       String       @map("author_id")
+  body           String
+  // Optional link to the CRM record being discussed, e.g. an opportunity or invoice.
+  recordType     String?      @map("record_type")
+  recordId       String?      @map("record_id")
+  recordLabel    String?      @map("record_label")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author         User         @relation(fields: [authorId], references: [id])
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
 }

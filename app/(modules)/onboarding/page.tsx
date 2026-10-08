@@ -96,7 +96,7 @@ export default function OnboardingPage() {
     <div className="space-y-5">
       <Title title="Onboarding" subtitle="Sales, Finance, and Operations checklist tasks until a customer is fully active." />
 
-      <Card>
+      <Card className="min-w-0 p-4 sm:p-5">
         <div className="grid gap-3 sm:grid-cols-2">
           <Select label="Team" value={teamFilter} onChange={setTeamFilter} options={["ALL", ...teams]} render={(v) => (v === "ALL" ? "All Teams" : titleCase(v))} />
           <Select label="Checklist Status" value={statusFilter} onChange={setStatusFilter} options={checklistStatuses} render={(v) => (v === "ALL" ? "All" : titleCase(v))} />
@@ -106,7 +106,7 @@ export default function OnboardingPage() {
       {loading ? (
         <LoadingGrid />
       ) : visibleChecklists.length === 0 ? (
-        <Card>
+        <Card className="min-w-0 p-5 sm:p-6">
           <Empty label="No onboarding checklists in this view." />
         </Card>
       ) : (
@@ -117,10 +117,10 @@ export default function OnboardingPage() {
             const tasksToShow = teamFilter === "ALL" ? checklist.tasks : checklist.tasks.filter((t) => t.team === teamFilter);
 
             return (
-              <Card key={checklist.id}>
+              <Card key={checklist.id} className="min-w-0 p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <Link href={`/customers/${checklist.customer.id}`} className="font-semibold text-brand-700 hover:text-brand-600 dark:text-brand-400">
+                  <div className="min-w-0">
+                    <Link href={`/customers/${checklist.customer.id}`} className="break-words font-semibold text-brand-700 hover:text-brand-600 dark:text-brand-400 [overflow-wrap:anywhere]">
                       {checklist.customer.customerCode} · {checklist.customer.name}
                     </Link>
                     <p className="text-xs text-slate-500 dark:text-slate-400">

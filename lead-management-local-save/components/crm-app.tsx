@@ -2,7 +2,11 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { getLeadSlaState } from "@/lib/sla";
+import { evaluateWorkflowActions } from "@/lib/workflow";
 import {
   Area,
   AreaChart,
@@ -27,7 +31,6 @@ import {
   ChevronRight,
   CircleDollarSign,
   ClipboardList,
-  LayoutDashboard,
   LogOut,
   Mail,
   Megaphone,
@@ -39,7 +42,8 @@ import {
   Settings,
   Sparkles,
   Sun,
-  Users
+  Users,
+  ArrowRight
 } from "lucide-react";
 import { dateLabel, taskBucket, titleCase } from "@/lib/format";
 import { Sidebar, type SidebarItem } from "@/components/shell/Sidebar";
@@ -72,21 +76,27 @@ type Lead = {
   tasks?: Task[];
   calls?: Call[];
   activities?: Activity[];
+  scoreMeta?: { score: number; reasons: string[]; breakdown: { factor: string; delta: number; note: string }[]; classification: string };
   ai?: AIAnalysis;
 };
 type Task = { id: string; title: string; description?: string; type: string; status: string; priority: string; dueDate: string; leadId?: string; lead?: Lead; assignedTo?: string; assignedUser?: User };
 type Call = { id: string; type?: string; direction: string; status?: string; outcome?: string; duration?: number; content?: string; notes?: string; transcript?: string; createdAt: string; agent?: User; lead?: Lead };
 type Activity = { id: string; activityType: string; description: string; createdAt: string; user?: User; metadata?: { status?: string } | null };
-type AIAnalysis = { mock: boolean; summary: string; intent: string; sentiment: string; requirement: string; objections: string; buyingTimeline: string; recommendedNextAction: string };
-
-const nav = [
-  ["Dashboard", LayoutDashboard],
-  ["Leads", Users],
-  ["Tasks", ClipboardList],
-  ["Means of Conversation", MessageSquare],
-  ["Campaigns", Megaphone],
-  ["Analytics", BarChart3]
-] as const;
+type AIAnalysis = {
+  mock: boolean;
+  summary: string;
+  intent: string;
+  customerIntent?: string;
+  keyRequirements?: string;
+  sentiment: string;
+  requirement: string;
+  objections: string;
+  buyingTimeline: string;
+  recommendedNextAction: string;
+  nextBestAction?: string;
+  confidence?: number;
+  scoreSummary?: string;
+};
 
 const statuses = ["NEW", "CONTACTED", "QUALIFIED", "INTERESTED", "FOLLOW_UP", "NURTURE", "CONVERTED", "LOST", "INVALID"];
 const priorities = ["HOT", "WARM", "COLD"];
@@ -130,7 +140,46 @@ const emptyCampaign = {
   budget: ""
 };
 
+const defaultLeadFilters = { q: "", status: "ALL", source: "ALL", priority: "ALL", assignedTo: "ALL" };
+
+type LeadFilterState = typeof defaultLeadFilters;
+type SavedLeadView = { id: string; name: string; filters: LeadFilterState; isDefault?: boolean };
+
+export function matchesLeadFilters(lead: Lead, filters: LeadFilterState) {
+  const textQuery = filters.q.trim().toLowerCase();
+  const matchesQuery =
+    !textQuery ||
+    `${lead.firstName} ${lead.lastName} ${lead.company} ${lead.email} ${lead.phone}`.toLowerCase().includes(textQuery) ||
+    lead.source.toLowerCase().includes(textQuery);
+
+  const matchesStatus = filters.status === "ALL" || lead.status === filters.status;
+  const matchesSource = filters.source === "ALL" || lead.source === filters.source;
+  const matchesPriority = filters.priority === "ALL" || lead.priority === filters.priority;
+  const matchesAssigned = filters.assignedTo === "ALL" || (filters.assignedTo === "UNASSIGNED" ? !lead.assignedTo : lead.assignedTo === filters.assignedTo);
+
+  return matchesQuery && matchesStatus && matchesSource && matchesPriority && matchesAssigned;
+}
+
+const defaultSavedViews: SavedLeadView[] = [
+  { id: "all", name: "All Leads", filters: defaultLeadFilters, isDefault: true },
+  { id: "hot", name: "Hot Pipeline", filters: { ...defaultLeadFilters, priority: "HOT" }, isDefault: true },
+  { id: "follow-up", name: "Follow Up", filters: { ...defaultLeadFilters, status: "FOLLOW_UP" }, isDefault: true },
+  { id: "unassigned", name: "Unassigned", filters: { ...defaultLeadFilters, assignedTo: "UNASSIGNED" }, isDefault: true }
+];
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const body = await response.text();
+  if (!body) return {} as T;
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw new Error(`API ${response.url} returned an invalid response.`);
+  }
+}
+
 export function CRMApp() {
+  const pathname = usePathname();
+  const router = useRouter();
   const [active, setActive] = useState("Dashboard");
   const [user, setUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
@@ -142,7 +191,9 @@ export function CRMApp() {
   const [dashboard, setDashboard] = useState<any>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [globalSearch, setGlobalSearch] = useState("");
-  const [filters, setFilters] = useState({ q: "", status: "ALL", source: "ALL", priority: "ALL", assignedTo: "ALL" });
+  const [filters, setFilters] = useState<LeadFilterState>(defaultLeadFilters);
+  const [savedViews, setSavedViews] = useState<SavedLeadView[]>(defaultSavedViews);
+  const [selectedViewId, setSelectedViewId] = useState<string>("all");
   const [leadsPage, setLeadsPage] = useState(1);
   const [leadsPagination, setLeadsPagination] = useState({ page: 1, pageSize: 25, total: 0, totalPages: 1 });
   const [showLeadForm, setShowLeadForm] = useState(false);
@@ -154,37 +205,73 @@ export function CRMApp() {
   const [taskForm, setTaskForm] = useState({ title: "", description: "", type: "FOLLOW_UP", priority: "WARM", dueDate: "", assignedTo: "", leadId: "" });
   const [callForm, setCallForm] = useState({ type: "CALL", direction: "OUTBOUND", status: "CONNECTED", outcome: "Interested", duration: 6, content: "", notes: "", transcript: "" });
   const [busy, setBusy] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(false);
   const agents = users.filter((item) => item.role === "SALES");
 
-  async function loadAll() {
-    const [boot, leadRes, taskRes, callRes, dashRes, campaignRes] = await Promise.all([
-      fetch("/api/bootstrap"),
-      fetch(`/api/leads?${new URLSearchParams({ ...filters, page: String(leadsPage), pageSize: String(leadsPagination.pageSize) })}`),
-      fetch("/api/tasks"),
-      fetch("/api/calls"),
-      fetch("/api/dashboard"),
-      fetch("/api/campaigns")
-    ]);
-    if (boot.status === 401) {
-      location.href = "/login";
-      return;
-    }
-    const bootJson = await boot.json();
-    setUser(bootJson.user);
-    setUsers(bootJson.users);
-    setNotifications(bootJson.notifications);
-    setCampaigns((await campaignRes.json()).campaigns);
-    const leadJson = await leadRes.json();
-    setLeads(leadJson.leads);
-    if (leadJson.pagination) setLeadsPagination(leadJson.pagination);
-    setTasks((await taskRes.json()).tasks);
-    setCalls((await callRes.json()).calls);
-    setDashboard(await dashRes.json());
-  }
+  const applyView = useCallback((view: SavedLeadView) => {
+    setSelectedViewId(view.id);
+    setFilters(view.filters);
+  }, []);
 
-  useEffect(() => {
-    loadAll();
-  }, [filters.status, filters.source, filters.priority, filters.assignedTo, leadsPage]);
+  const saveCurrentView = useCallback(() => {
+    const name = window.prompt("Name this saved view", `View ${savedViews.length + 1}`);
+    if (!name) return;
+
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    const nextView: SavedLeadView = {
+      id: `custom-${Date.now()}`,
+      name: trimmed,
+      filters: { ...filters }
+    };
+
+    setSavedViews((previous) => [nextView, ...previous]);
+    setSelectedViewId(nextView.id);
+  }, [filters, savedViews.length]);
+
+  const loadAll = useCallback(async () => {
+    setIsLoadingData(true);
+    try {
+      const [boot, leadRes, taskRes, callRes, dashRes, campaignRes] = await Promise.all([
+        fetch("/api/bootstrap"),
+        fetch(`/api/leads?${new URLSearchParams({ ...filters, page: String(leadsPage), pageSize: String(leadsPagination.pageSize) })}`),
+        fetch("/api/tasks"),
+        fetch("/api/calls"),
+        fetch("/api/dashboard"),
+        fetch("/api/campaigns")
+      ]);
+      if (boot.status === 401) {
+        location.href = "/login";
+        return;
+      }
+
+      const [bootJson, campaignJson, leadJson, taskJson, callJson, dashboardJson] = await Promise.all([
+        readJsonResponse<{ user?: User; users?: User[]; notifications?: unknown[] }>(boot),
+        readJsonResponse<{ campaigns?: Campaign[] }>(campaignRes),
+        readJsonResponse<{ leads?: Lead[]; pagination?: typeof leadsPagination }>(leadRes),
+        readJsonResponse<{ tasks?: Task[] }>(taskRes),
+        readJsonResponse<{ calls?: Call[] }>(callRes),
+        readJsonResponse<any>(dashRes)
+      ]);
+
+      if (!bootJson.user) throw new Error("The CRM session is unavailable.");
+      if (!campaignRes.ok || !campaignJson.campaigns) setCampaigns([]);
+      else setCampaigns(campaignJson.campaigns);
+      setUser(bootJson.user);
+      setUsers(bootJson.users ?? []);
+      setNotifications(bootJson.notifications ?? []);
+      setLeads(leadJson.leads ?? []);
+      if (leadJson.pagination) setLeadsPagination(leadJson.pagination);
+      setTasks(taskJson.tasks ?? []);
+      setCalls(callJson.calls ?? []);
+      setDashboard(dashboardJson);
+    } catch (error) {
+      console.error("CRM data load failed", error);
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, [filters, leadsPage, leadsPagination.pageSize]);
 
   useEffect(() => {
     const timer = setTimeout(() => setFilters((prev) => ({ ...prev, q: globalSearch })), 250);
@@ -192,21 +279,21 @@ export function CRMApp() {
   }, [globalSearch]);
 
   useEffect(() => {
-    loadAll();
-  }, [filters.q]);
+    void loadAll();
+  }, [filters, leadsPage, leadsPagination.pageSize, loadAll]);
 
   useEffect(() => {
     setLeadsPage(1);
   }, [filters.status, filters.source, filters.priority, filters.assignedTo, filters.q]);
 
-  async function openLead(id: string) {
+  const openLead = useCallback(async (id: string) => {
     const response = await fetch(`/api/leads/${id}`);
     const json = await response.json();
     setSelectedLead(json.lead);
     setTaskForm((prev) => ({ ...prev, leadId: id, assignedTo: json.lead?.assignedTo ?? user?.id ?? "" }));
-  }
+  }, [user?.id]);
 
-  async function createLead(event: React.FormEvent) {
+  const createLead = useCallback(async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setLeadFormError("");
@@ -222,9 +309,9 @@ export function CRMApp() {
     } else {
       setLeadFormError(json.error ?? "Could not create lead.");
     }
-  }
+  }, [leadForm, loadAll, openLead]);
 
-  async function createCampaign(event: React.FormEvent) {
+  const createCampaign = useCallback(async (event: React.FormEvent) => {
     event.preventDefault();
     setCampaignBusy(true);
     const response = await fetch("/api/campaigns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(campaignForm) });
@@ -236,33 +323,33 @@ export function CRMApp() {
       setCampaignForm(emptyCampaign);
       setActive("Campaigns");
     }
-  }
+  }, [campaignForm]);
 
-  async function updateLead(id: string, patch: Partial<Lead>) {
+  const updateLead = useCallback(async (id: string, patch: Partial<Lead>) => {
     const response = await fetch(`/api/leads/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
     const json = await response.json();
     if (response.ok) {
       setSelectedLead(json.lead);
       await loadAll();
     }
-  }
+  }, [loadAll]);
 
-  async function createTask(event: React.FormEvent) {
+  const createTask = useCallback(async (event: React.FormEvent) => {
     event.preventDefault();
     const payload = { ...taskForm, assignedTo: taskForm.assignedTo || user?.id, leadId: taskForm.leadId || selectedLead?.id };
     await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     setTaskForm({ title: "", description: "", type: "FOLLOW_UP", priority: "WARM", dueDate: "", assignedTo: "", leadId: selectedLead?.id ?? "" });
     await loadAll();
     if (selectedLead) await openLead(selectedLead.id);
-  }
+  }, [loadAll, openLead, selectedLead, taskForm, user?.id]);
 
-  async function completeTask(id: string) {
+  const completeTask = useCallback(async (id: string) => {
     await fetch(`/api/tasks/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "COMPLETED" }) });
     await loadAll();
     if (selectedLead) await openLead(selectedLead.id);
-  }
+  }, [loadAll, openLead, selectedLead]);
 
-  async function logCall(event: React.FormEvent) {
+  const logCall = useCallback(async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selectedLead || !user) return;
     const response = await fetch("/api/calls", {
@@ -274,23 +361,23 @@ export function CRMApp() {
     setCallForm({ type: "CALL", direction: "OUTBOUND", status: "CONNECTED", outcome: "Interested", duration: 6, content: "", notes: "", transcript: "" });
     await loadAll();
     await openLead(selectedLead.id);
-  }
+  }, [callForm, loadAll, openLead, selectedLead, user]);
 
-  async function analyze() {
+  const analyze = useCallback(async () => {
     if (!selectedLead) return;
     const response = await fetch("/api/ai/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ leadId: selectedLead.id }) });
     const json = await response.json();
     setSelectedLead((lead) => (lead ? { ...lead, ai: json.analysis } : lead));
     await openLead(selectedLead.id);
-  }
+  }, [openLead, selectedLead]);
 
-  async function logout() {
+  const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     location.href = "/login";
-  }
+  }, []);
 
   const content = useMemo(() => {
-    if (active === "Dashboard") return <Dashboard dashboard={dashboard} openLead={openLead} setActive={setActive} user={user} />;
+    if (active === "Dashboard") return <Dashboard dashboard={dashboard} leads={leads} openLead={openLead} setActive={setActive} user={user} loading={isLoadingData} />;
     if (active === "Leads")
       return (
         <LeadsView
@@ -304,6 +391,10 @@ export function CRMApp() {
           pagination={leadsPagination}
           page={leadsPage}
           setPage={setLeadsPage}
+          savedViews={savedViews}
+          selectedViewId={selectedViewId}
+          onApplyView={applyView}
+          onSaveView={saveCurrentView}
         />
       );
     if (active === "Tasks") return <TasksView tasks={tasks} completeTask={completeTask} setTaskForm={setTaskForm} taskForm={taskForm} users={users} leads={leads} createTask={createTask} />;
@@ -311,35 +402,37 @@ export function CRMApp() {
     if (active === "Campaigns") return <CampaignsView campaigns={campaigns} setShowCampaignForm={setShowCampaignForm} />;
     if (active === "Analytics") return <AnalyticsView dashboard={dashboard} tasks={tasks} />;
     return <SettingsView user={user} users={users} />;
-  }, [active, dashboard, leads, filters, users, tasks, calls, campaigns, taskForm, user, leadsPagination, leadsPage]);
+  }, [active, applyView, calls, campaigns, completeTask, createTask, dashboard, filters, leads, leadsPage, leadsPagination, openLead, saveCurrentView, savedViews, selectedViewId, taskForm, tasks, updateLead, user, users]);
 
   const sidebarItems: SidebarItem[] = useMemo(() => {
-    const tabs: SidebarItem[] = nav.map(([item, Icon]) => ({ kind: "tab", label: item, icon: Icon, active: active === item, onClick: () => setActive(item) }));
-    const links: SidebarItem[] = user ? moduleNavForRole(user.role).map((item) => ({ kind: "link", label: item.label, icon: item.icon, href: item.href, active: false })) : [];
-    return [...tabs, ...links];
-  }, [active, user]);
+    return user ? moduleNavForRole(user.role).map((item) => ({ kind: "link" as const, label: item.label, icon: item.icon, href: item.href, active: pathname === item.href || pathname.startsWith(`${item.href}/`) })) : [];
+  }, [user]);
 
   return (
-    <div className="flex min-h-screen bg-app-glow">
-      <Sidebar items={sidebarItems} />
+    <div className="flex min-h-screen flex-col bg-app-glow lg:flex-row">
+      <Sidebar items={sidebarItems} workspace={user?.role === "FINANCE" ? "Finance & Billing" : user?.role === "CEO" ? "Executive Snapshot" : user?.role === "OPERATIONS" ? "Operations" : "Sales & Revenue"} />
       <main className="min-w-0 flex-1">
         <header className="sticky top-0 z-10 border-b border-line bg-surface/80 px-4 py-3 backdrop-blur-md">
           <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
               <div className="relative max-w-xl">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={17} />
-                <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Search leads by name, phone, email or company" className="h-10 w-full rounded-xl border border-line bg-panel pl-10 pr-3 text-sm outline-none transition-shadow duration-150 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15" />
+                <input value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Search leads, contacts, companies..." className="h-10 w-full rounded-xl border border-line bg-panel pl-10 pr-3 text-sm text-ink outline-none transition-shadow duration-150 placeholder:text-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/12" />
               </div>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-xl border border-line bg-surface px-2 py-1.5">
+              <button onClick={() => setActive("Dashboard")} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-700 transition-colors hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300">Overview</button>
+              <button onClick={() => setActive("Leads")} className="rounded-lg px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600 transition-colors hover:bg-panel dark:text-slate-300">Leads</button>
             </div>
             <div className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface text-slate-500 transition-colors hover:bg-panel dark:text-slate-400">
               <Bell size={17} />
               {notifications?.length ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500 ring-2 ring-surface" /> : null}
             </div>
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-semibold text-white">{(user?.name ?? "?").charAt(0)}</div>
+            <div className="flex items-center gap-2.5 rounded-xl border border-line bg-surface px-2 py-1.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-semibold text-white shadow-glow">{(user?.name ?? "?").charAt(0)}</div>
               <div className="hidden text-right sm:block">
                 <div className="text-sm font-semibold leading-tight text-ink">{user?.name ?? "Loading"}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">{user?.role ? titleCase(user.role) : ""}</div>
+                <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">{user?.role ? titleCase(user.role) : ""}</div>
               </div>
             </div>
             <button onClick={() => setActive("Settings")} className={`flex h-10 w-10 items-center justify-center rounded-xl border transition-colors ${active === "Settings" ? "border-brand-300 bg-brand-50 text-brand-600 dark:border-brand-700 dark:bg-brand-500/10 dark:text-brand-400" : "border-line bg-surface text-slate-600 hover:bg-panel dark:text-slate-300"}`}><Settings size={17} /></button>
@@ -364,7 +457,7 @@ export function CRMApp() {
         />
       ) : null}
       {showCampaignForm ? <CreateCampaignModal form={campaignForm} setForm={setCampaignForm} onClose={() => setShowCampaignForm(false)} onSubmit={createCampaign} busy={campaignBusy} /> : null}
-      {selectedLead ? <LeadDrawer lead={selectedLead} users={agents} updateLead={updateLead} onClose={() => setSelectedLead(null)} taskForm={taskForm} setTaskForm={setTaskForm} createTask={createTask} completeTask={completeTask} callForm={callForm} setCallForm={setCallForm} logCall={logCall} analyze={analyze} /> : null}
+      {selectedLead ? <LeadDrawer lead={selectedLead} users={agents} updateLead={updateLead} onClose={() => setSelectedLead(null)} onConverted={() => { setSelectedLead(null); router.push("/opportunities"); }} taskForm={taskForm} setTaskForm={setTaskForm} createTask={createTask} completeTask={completeTask} callForm={callForm} setCallForm={setCallForm} logCall={logCall} analyze={analyze} /> : null}
     </div>
   );
 }
@@ -415,11 +508,94 @@ function activityConversationTone(activity: Activity): "green" | "red" | null {
 }
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <section className={`rounded-2xl border border-line/70 bg-surface p-4 shadow-card transition-shadow duration-200 hover:shadow-card-hover ${className}`}>{children}</section>;
+  return <section className={`rounded-2xl border border-line bg-surface p-4 shadow-card transition-shadow duration-200 hover:shadow-card-hover ${className}`}>{children}</section>;
 }
 
-function Dashboard({ dashboard, openLead, setActive, user }: any) {
-  if (!dashboard) return <LoadingGrid />;
+function Dashboard({ dashboard, leads, openLead, setActive, user, loading }: any) {
+  const slaSummary = useMemo(() => {
+    const summary = { ok: 0, warning: 0, escalated: 0 };
+    for (const lead of leads) {
+      const state = getLeadSlaState({
+        priority: lead.priority as "HOT" | "WARM" | "COLD",
+        status: lead.status,
+        nextFollowUpAt: lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt) : null
+      });
+      if (state.status === "OK") summary.ok += 1;
+      else if (state.status === "WARNING") summary.warning += 1;
+      else summary.escalated += 1;
+    }
+    return summary;
+  }, [leads]);
+
+  const workflowActions = useMemo(() => leads.flatMap((lead) => evaluateWorkflowActions(lead)).slice(0, 4), [leads]);
+  const isFinance = user?.role === "FINANCE" || user?.role === "ADMIN";
+  const isOperations = user?.role === "OPERATIONS";
+
+  if (!dashboard || (loading && !dashboard)) return <LoadingGrid />;
+
+  if (isFinance) {
+    return (
+      <div className="space-y-5">
+        <Title
+          title="Finance workspace"
+          subtitle="Review billing, reconciliation, invoices, and outstanding commercial balances."
+          action={<button onClick={() => setActive("Tasks")} className="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-panel">Review exceptions</button>}
+        />
+        <WorkflowJourney
+          title="Month-end workflow"
+          steps={[
+            { label: "Usage", detail: "Review consumption", href: "/usage" },
+            { label: "Billing", detail: "Calculate customer charges", href: "/billing" },
+            { label: "Reconcile", detail: "Review variances", href: "/reconciliation" },
+            { label: "Invoice", detail: "Issue and collect", href: "/invoices" }
+          ]}
+        />
+        <FinanceOverviewWidgets />
+        <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
+          <ChartCard title="Revenue and billing trend"><AreaGraph data={dashboard.revenueTrend ?? [{ name: "No data", value: 0 }]} /></ChartCard>
+          <Card className="p-5">
+            <div><h3 className="text-sm font-semibold text-ink">Finance priorities</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Work requiring attention today</p></div>
+            <div className="mt-4 space-y-2">
+              {dashboard.actions?.slice(0, 5).map((action: any) => (
+                <button key={action.type + action.message} onClick={() => action.leadId && openLead(action.leadId)} className="flex w-full items-center justify-between rounded-xl border border-line bg-panel/50 p-3 text-left transition-colors hover:border-brand-200 hover:bg-brand-50/50 dark:hover:border-brand-800 dark:hover:bg-brand-500/5">
+                  <span className="text-sm text-slate-600 dark:text-slate-300">{action.message}</span>
+                  <ChevronRight size={16} className="text-slate-400" />
+                </button>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (isOperations) {
+    return (
+      <div className="space-y-5">
+        <Title title="Operations workspace" subtitle="Move customer setups from handoff through platform connection and verified usage." />
+        <WorkflowJourney
+          title="Customer activation workflow"
+          steps={[
+            { label: "Onboarding", detail: "Complete team checklist", href: "/onboarding" },
+            { label: "Platform mapping", detail: "Connect customer services", href: "/platform-mapping" },
+            { label: "Usage", detail: "Import and validate records", href: "/usage" },
+            { label: "Customer", detail: "Confirm activation", href: "/customers" }
+          ]}
+        />
+        <div className="grid gap-4 md:grid-cols-2">
+          <Link href="/onboarding" className="rounded-2xl border border-line bg-surface p-5 shadow-card transition-colors hover:border-brand-300 hover:bg-panel">
+            <div className="text-sm font-semibold text-ink">Open onboarding queue</div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review account setup tasks and team handoffs.</p>
+          </Link>
+          <Link href="/platform-mapping" className="rounded-2xl border border-line bg-surface p-5 shadow-card transition-colors hover:border-brand-300 hover:bg-panel">
+            <div className="text-sm font-semibold text-ink">Check platform connections</div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Verify SMS and WhatsApp account mappings.</p>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   const kpis = [
     ["Total Leads", dashboard.kpis.total, Users, "brand"],
     ["New Leads", dashboard.kpis.newLeads, Plus, "violet"],
@@ -430,130 +606,202 @@ function Dashboard({ dashboard, openLead, setActive, user }: any) {
     ["Converted", dashboard.kpis.converted, CircleDollarSign, "green"],
     ["Conversion Rate", `${dashboard.kpis.conversionRate}%`, BarChart3, "brand"]
   ];
+
   return (
     <div className="space-y-5">
-      <Title title="Dashboard" subtitle="Pipeline health, action center, and today&apos;s follow-ups." />
+      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5 shadow-card sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-600 dark:text-brand-400">Sales cockpit</p>
+          <h2 className="mt-1.5 text-2xl font-semibold tracking-[-0.03em] text-ink">Executive CRM overview</h2>
+          <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">Monitor pipeline health, team productivity, and revenue momentum.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => setActive("Leads")} className="rounded-xl bg-brand-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-glow transition-all hover:bg-brand-700">Open pipeline</button>
+          <button onClick={() => setActive("Tasks")} className="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-xs font-semibold text-ink transition-all hover:bg-panel">View tasks</button>
+        </div>
+      </div>
+
+      <WorkflowJourney
+        title="Sales workflow"
+        steps={[
+          { label: "Lead", detail: "Qualify the requirement", href: "/" },
+          { label: "Opportunity", detail: "Build the proposal", href: "/opportunities" },
+          { label: "Pricing", detail: "Submit for approval", href: "/price-approvals" },
+          { label: "Customer", detail: "Track account growth", href: "/customers" }
+        ]}
+      />
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map(([label, value, Icon, tone]: any) => (
-          <Card key={label} className="group">
-            <div className="flex items-center justify-between">
-              <div><p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight text-ink">{value}</p></div>
-              <div className={`flex h-11 w-11 items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105 ${kpiChipTones[tone]}`}><Icon size={19} /></div>
+          <Card key={label} className="group p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+                <p className="mt-2 text-[28px] font-semibold tracking-[-0.04em] text-ink">{value}</p>
+              </div>
+              <div className={`flex h-10 w-10 items-center justify-center rounded-xl transition-transform duration-200 group-hover:-translate-y-0.5 ${kpiChipTones[tone]}`}><Icon size={18} /></div>
             </div>
           </Card>
         ))}
       </div>
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_.8fr]">
+
+      <div className="grid gap-4 xl:grid-cols-[1.3fr_.7fr]">
         <ChartCard title="Leads by Status"><BarGraph data={dashboard.byStatus} /></ChartCard>
-        <Card>
-          <h3 className="font-semibold text-ink">AI Action Center</h3>
-          <div className="mt-3 space-y-2.5">
+        <Card className="p-5">
+          <div className="flex items-center justify-between">
+            <div><h3 className="text-sm font-semibold text-ink">AI Action Center</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Recommended next actions</p></div>
+            <Badge tone="blue">Priority</Badge>
+          </div>
+          <div className="mt-4 space-y-2.5">
             {dashboard.actions.map((action: any) => (
-              <button key={action.type + action.message} onClick={() => action.leadId && openLead(action.leadId)} className="flex w-full items-center justify-between rounded-xl border border-line p-3 text-left transition-all duration-150 hover:border-brand-300 hover:bg-panel">
-                <div><div className="text-sm font-semibold">{action.type}</div><div className="text-sm text-slate-500 dark:text-slate-400">{action.message}</div></div>
-                <ChevronRight size={16} className="text-slate-400 transition-transform group-hover:translate-x-0.5" />
+              <button key={action.type + action.message} onClick={() => action.leadId && openLead(action.leadId)} className="group flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-panel/60 p-3 text-left transition-all hover:border-brand-200 hover:bg-brand-50/60 dark:hover:border-brand-800 dark:hover:bg-brand-500/5">
+                <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-[0.08em] text-brand-600 dark:text-brand-400">{action.type}</div><div className="mt-1 truncate text-sm text-slate-600 dark:text-slate-300">{action.message}</div></div>
+                <ChevronRight size={16} className="shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5" />
               </button>
             ))}
           </div>
           <button onClick={() => setActive("Tasks")} className="mt-4 text-sm font-semibold text-brand-700 transition-colors hover:text-brand-600 dark:text-brand-400">View all tasks →</button>
         </Card>
       </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Card className="p-5">
+          <div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold text-ink">SLA overview</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Follow-up health</p></div><Badge tone="slate">Live</Badge></div>
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <div className="rounded-xl border border-line bg-panel p-3"><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">OK</div><div className="mt-2 text-2xl font-semibold text-ink">{slaSummary.ok}</div></div>
+            <div className="rounded-xl border border-line bg-panel p-3"><div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">Warning</div><div className="mt-2 text-2xl font-semibold text-amber-600">{slaSummary.warning}</div></div>
+            <div className="rounded-xl border border-line bg-panel p-3"><div className="text-[10px] font-semibold uppercase tracking-wide text-red-600">Escalated</div><div className="mt-2 text-2xl font-semibold text-red-600">{slaSummary.escalated}</div></div>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold text-ink">Automation queue</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Workflow actions in progress</p></div><Badge tone="green">Live</Badge></div>
+          <div className="mt-4 space-y-2">
+            {workflowActions.map((action) => (
+              <div key={`${action.leadId ?? "lead"}-${action.id}`} className="rounded-xl border border-line bg-panel/60 p-3">
+                <div className="text-sm font-semibold text-ink">{action.name}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{action.description}</div>
+                <div className="mt-2 text-xs font-medium text-brand-700 dark:text-brand-300">{action.message}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div><h3 className="text-sm font-semibold text-ink">Today&apos;s follow-ups</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Priority tasks requiring attention</p></div>
+          <div className="mt-4 space-y-2">{dashboard.todayTasks.map((task: Task) => <TaskRow key={task.id} task={task} />)}</div>
+        </Card>
+      </div>
+
       <div className="grid gap-4 xl:grid-cols-3">
         <ChartCard title="Leads by Source"><PieGraph data={dashboard.bySource} /></ChartCard>
         <ChartCard title="Conversion Funnel"><FunnelGraph data={dashboard.funnel} /></ChartCard>
-        <Card>
-          <h3 className="font-semibold text-ink">Today&apos;s Follow-ups</h3>
-          <div className="mt-3 space-y-2">
-            {dashboard.todayTasks.map((task: Task) => <TaskRow key={task.id} task={task} />)}
-          </div>
-        </Card>
+        <ChartCard title="Agent Performance"><AgentGraph data={dashboard.agentPerformance} /></ChartCard>
       </div>
-      <ChartCard title="Agent Performance"><AgentGraph data={dashboard.agentPerformance} /></ChartCard>
+
       {user?.role === "SALES" || user?.role === "ADMIN" ? (
-        <div>
-          <h2 className="mb-3 font-semibold text-ink">My Customers & Billing</h2>
-          <SalesBillingWidgets />
-        </div>
+        <div><div className="mb-3"><h2 className="text-sm font-semibold text-ink">My Customers & Billing</h2><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Sales and commercial activity</p></div><SalesBillingWidgets /></div>
       ) : null}
       {user?.role === "FINANCE" || user?.role === "ADMIN" ? (
-        <div>
-          <h2 className="mb-3 font-semibold text-ink">Finance Overview</h2>
-          <FinanceOverviewWidgets />
-        </div>
+        <div><div className="mb-3"><h2 className="text-sm font-semibold text-ink">Finance Overview</h2><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Revenue, billing, and reconciliation</p></div><FinanceOverviewWidgets /></div>
       ) : null}
     </div>
   );
 }
 
-function LeadsView({ leads, filters, setFilters, users, openLead, setShowLeadForm, updateLead, pagination, page, setPage }: any) {
+function WorkflowJourney({ title, steps }: { title: string; steps: { label: string; detail: string; href: string }[] }) {
   return (
-    <div className="space-y-4">
-      <Title title="Leads" subtitle="Search, filter, assign, update status, and open Lead 360." action={<button onClick={() => setShowLeadForm(true)} className="rounded-xl bg-gradient-to-b from-brand-500 to-brand-600 px-3.5 py-2 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:brightness-110 active:scale-[0.98]">Create Lead</button>} />
-      <Card>
-        <div className="grid gap-3 md:grid-cols-5">
-          <Filter label="Status" value={filters.status} onChange={(v) => setFilters({ ...filters, status: v })} options={["ALL", ...statuses]} />
-          <Filter label="Source" value={filters.source} onChange={(v) => setFilters({ ...filters, source: v })} options={["ALL", ...sources]} />
-          <Filter label="Priority" value={filters.priority} onChange={(v) => setFilters({ ...filters, priority: v })} options={["ALL", ...priorities]} />
-          <Filter label="Agent" value={filters.assignedTo} onChange={(v) => setFilters({ ...filters, assignedTo: v })} options={["ALL", ...users.map((u: User) => u.id)]} render={(v) => users.find((u: User) => u.id === v)?.name ?? v} />
-          <div><label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Score</label><div className="mt-2 rounded-lg border border-line px-3 py-2 text-sm text-slate-500 dark:text-slate-400">Sort by score in table</div></div>
+    <section aria-label={title} className="rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5">
+      <h3 className="mb-3 text-sm font-semibold text-ink">{title}</h3>
+      <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {steps.map((step, index) => (
+          <li key={step.label}>
+            <Link href={step.href} className="flex h-full min-h-[76px] items-start gap-3 rounded-xl border border-line bg-panel/70 p-3 transition-colors hover:border-brand-300 hover:bg-brand-50/70 dark:hover:bg-brand-500/10">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">{index + 1}</span>
+              <span className="min-w-0"><span className="block text-sm font-semibold text-ink">{step.label}</span><span className="mt-1 block text-xs leading-5 text-slate-500 dark:text-slate-400">{step.detail}</span></span>
+            </Link>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function LeadsView({ leads, filters, setFilters, users, openLead, setShowLeadForm, updateLead, pagination, page, setPage, savedViews, selectedViewId, onApplyView, onSaveView }: any) {
+  const visibleLeads = useMemo(() => leads.filter((lead: Lead) => matchesLeadFilters(lead, filters)), [filters, leads]);
+
+  return (
+    <div className="space-y-5">
+      <Title
+        title="Leads"
+        subtitle="Search, filter, assign, update status, and open Lead 360."
+        action={
+          <div className="flex flex-wrap gap-2">
+            <button onClick={onSaveView} className="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-panel">Save view</button>
+            <button onClick={() => setShowLeadForm(true)} className="rounded-xl bg-brand-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-glow transition-all hover:bg-brand-700 active:scale-[0.98]">Create lead</button>
+          </div>
+        }
+      />
+
+      <Card className="p-4">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><p className="text-sm font-semibold text-ink">Saved views</p><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Quick access to your most used lead segments.</p></div>
+            <div className="flex flex-wrap gap-2">
+              {savedViews.map((view: SavedLeadView) => (
+                <button key={view.id} type="button" onClick={() => onApplyView(view)} className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all ${selectedViewId === view.id ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-500/10 dark:text-brand-300" : "border-line bg-surface text-slate-600 hover:bg-panel dark:text-slate-300"}`}>
+                  {view.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-3 border-t border-line pt-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Filter label="Status" value={filters.status} onChange={(v) => setFilters({ ...filters, status: v })} options={["ALL", ...statuses]} />
+            <Filter label="Source" value={filters.source} onChange={(v) => setFilters({ ...filters, source: v })} options={["ALL", ...sources]} />
+            <Filter label="Priority" value={filters.priority} onChange={(v) => setFilters({ ...filters, priority: v })} options={["ALL", ...priorities]} />
+            <Filter label="Agent" value={filters.assignedTo} onChange={(v) => setFilters({ ...filters, assignedTo: v })} options={["ALL", "UNASSIGNED", ...users.map((u: User) => u.id)]} render={(v) => (v === "UNASSIGNED" ? "Unassigned" : users.find((u: User) => u.id === v)?.name ?? v)} />
+          </div>
         </div>
       </Card>
-      <div className="overflow-hidden rounded-2xl border border-line/70 bg-surface shadow-card">
+
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div><p className="text-sm font-semibold text-ink">Lead pipeline</p><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{visibleLeads.length} leads shown</p></div>
+          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Live workspace</div>
+        </div>
         <div className="overflow-x-auto thin-scrollbar">
           <table className="w-full min-w-[1100px] text-left text-sm">
-            <thead className="bg-panel text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              <tr>{["Lead Name", "Company", "Phone", "Email", "Source", "Status", "Priority", "Score", "Assigned Agent", "Next Follow-up", "Created", "Actions"].map((h) => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}</tr>
+            <thead className="bg-panel text-[10px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <tr>{["Lead Name", "Company", "Phone", "Email", "Source", "Status", "Priority", "Score", "Assigned Agent", "Next Follow-up", "Created", "Actions"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-3 font-semibold">{h}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {leads.map((lead: Lead) => (
-                <tr key={lead.id} className="transition-colors hover:bg-panel/70">
-                  <td className="px-4 py-3 font-semibold text-ink">{lead.firstName} {lead.lastName}</td>
-                  <td className="px-4 py-3">{lead.company}</td>
-                  <td className="px-4 py-3">{lead.phone}</td>
-                  <td className="px-4 py-3">{lead.email}</td>
-                  <td className="px-4 py-3">{lead.source}</td>
+              {visibleLeads.map((lead: Lead) => (
+                <tr key={lead.id} className="transition-colors hover:bg-panel/60">
+                  <td className="px-4 py-3"><button onClick={() => openLead(lead.id)} className="left text-left font-semibold text-ink transition-colors hover:text-brand-600">{lead.firstName} {lead.lastName}</button></td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{lead.company}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{lead.phone}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{lead.email}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{lead.source}</td>
                   <td className="px-4 py-3"><Badge tone={statusTone(lead.status)}>{titleCase(lead.status)}</Badge></td>
                   <td className="px-4 py-3"><Badge tone={priorityTone(lead.priority)}>{lead.priority}</Badge></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-ink">{lead.score}</span>
-                      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-panel"><span className="block h-full rounded-full bg-brand-500" style={{ width: `${lead.score}%` }} /></span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <select value={lead.assignedTo ?? ""} onChange={(e) => updateLead(lead.id, { assignedTo: e.target.value })} className="rounded-lg border border-line bg-surface px-2 py-1 transition-colors hover:border-brand-400">
-                      <option value="">Unassigned</option>{users.map((u: User) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3">{dateLabel(lead.nextFollowUpAt)}</td>
-                  <td className="px-4 py-3">{dateLabel(lead.createdAt)}</td>
-                  <td className="px-4 py-3"><button onClick={() => openLead(lead.id)} className="rounded-lg border border-line px-3 py-1.5 font-semibold text-brand-700 transition-colors hover:bg-brand-50 dark:text-brand-400 dark:hover:bg-brand-500/10">View</button></td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-2"><span className="w-5 font-semibold text-ink">{lead.score}</span><span className="h-1.5 w-16 overflow-hidden rounded-full bg-panel"><span className="block h-full rounded-full bg-brand-500" style={{ width: `${lead.score}%` }} /></span></div></td>
+                  <td className="px-4 py-3"><select value={lead.assignedTo ?? ""} onChange={(e) => updateLead(lead.id, { assignedTo: e.target.value })} className="max-w-[145px] rounded-lg border border-line bg-surface px-2 py-1.5 text-xs transition-colors hover:border-brand-400"><option value="">Unassigned</option>{users.map((u: User) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></td>
+                  <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{dateLabel(lead.nextFollowUpAt)}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{dateLabel(lead.createdAt)}</td>
+                  <td className="px-4 py-3"><button onClick={() => openLead(lead.id)} className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-50 dark:text-brand-400 dark:hover:bg-brand-500/10">View</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        {!leads.length ? <Empty label="No leads match these filters." /> : null}
-        {leads.length ? (
-          <div className="flex items-center justify-between border-t border-line px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
-            <span>
-              Page {pagination.page} of {pagination.totalPages} · {pagination.total} lead{pagination.total === 1 ? "" : "s"}
-            </span>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPage((p: number) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="rounded-lg border border-line px-3 py-1.5 font-semibold transition-colors hover:bg-panel disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => setPage((p: number) => Math.min(pagination.totalPages, p + 1))}
-                disabled={page >= pagination.totalPages}
-                className="rounded-lg border border-line px-3 py-1.5 font-semibold transition-colors hover:bg-panel disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next
-              </button>
+        {!visibleLeads.length ? <Empty label="No leads match these filters. Adjust your view or create a new lead." /> : null}
+        {visibleLeads.length ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+            <span>Page {pagination.page} of {pagination.totalPages} · {pagination.total} lead{pagination.total === 1 ? "" : "s"}</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setPage((p: number) => Math.max(1, p - 1))} disabled={page <= 1} className="rounded-lg border border-line px-3 py-1.5 font-semibold transition-colors hover:bg-panel disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
+              <button onClick={() => setPage((p: number) => Math.min(pagination.totalPages, p + 1))} disabled={page >= pagination.totalPages} className="rounded-lg border border-line px-3 py-1.5 font-semibold transition-colors hover:bg-panel disabled:cursor-not-allowed disabled:opacity-40">Next</button>
             </div>
           </div>
         ) : null}
@@ -562,8 +810,36 @@ function LeadsView({ leads, filters, setFilters, users, openLead, setShowLeadFor
   );
 }
 
-function LeadDrawer({ lead, users, updateLead, onClose, taskForm, setTaskForm, createTask, completeTask, callForm, setCallForm, logCall, analyze }: any) {
+function LeadDrawer({ lead, users, updateLead, onClose, onConverted, taskForm, setTaskForm, createTask, completeTask, callForm, setCallForm, logCall, analyze }: any) {
   const ai = lead.ai;
+  const [showConvertForm, setShowConvertForm] = useState(false);
+  const [conversion, setConversion] = useState({ opportunityValue: "", expectedStartDate: "", service: "SMS", expectedMonthlyVolume: "", notes: "" });
+  const [conversionError, setConversionError] = useState("");
+  const [converting, setConverting] = useState(false);
+
+  async function convertLead(event: React.FormEvent) {
+    event.preventDefault();
+    setConversionError("");
+    setConverting(true);
+    const volume = Number(conversion.expectedMonthlyVolume);
+    const response = await fetch(`/api/leads/${lead.id}/convert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        opportunityValue: Number(conversion.opportunityValue),
+        expectedStartDate: conversion.expectedStartDate || null,
+        requirements: volume > 0 ? [{ service: conversion.service, expectedMonthlyVolume: volume, notes: conversion.notes }] : []
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    setConverting(false);
+    if (!response.ok) {
+      setConversionError(result.error ?? "Could not convert this lead.");
+      return;
+    }
+    onConverted();
+  }
+
   return (
     <div className="fixed inset-0 z-30 animate-fade-in bg-slate-900/40 backdrop-blur-sm">
       <aside className="absolute right-0 top-0 h-full w-full max-w-5xl animate-slide-in-right overflow-y-auto bg-surface shadow-soft thin-scrollbar sm:border-l sm:border-line">
@@ -579,17 +855,72 @@ function LeadDrawer({ lead, users, updateLead, onClose, taskForm, setTaskForm, c
             <select value={lead.status} onChange={(e) => updateLead(lead.id, { status: e.target.value })} className="rounded-lg border border-line bg-surface px-3 py-2 text-sm transition-colors hover:border-brand-400">{statuses.map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</select>
             <select value={lead.assignedTo ?? ""} onChange={(e) => updateLead(lead.id, { assignedTo: e.target.value })} className="rounded-lg border border-line bg-surface px-3 py-2 text-sm transition-colors hover:border-brand-400"><option value="">Assign lead</option>{users.map((u: User) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
             <button onClick={analyze} className="flex items-center gap-2 rounded-lg bg-gradient-to-b from-slate-800 to-slate-900 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:brightness-110 active:scale-[0.98] dark:from-slate-700 dark:to-slate-800"><Sparkles size={16} /> Analyze Call</button>
+            {lead.status !== "CONVERTED" && lead.status !== "LOST" && lead.status !== "INVALID" ? <button onClick={() => { setShowConvertForm((shown) => !shown); setConversionError(""); }} className="flex items-center gap-2 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-glow transition-colors hover:bg-brand-700"><ArrowRight size={16} /> Convert to opportunity</button> : null}
           </div>
+          {showConvertForm ? (
+            <form onSubmit={convertLead} className="mt-4 rounded-xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-500/5">
+              <div className="mb-3"><h3 className="text-sm font-semibold text-ink">Qualify this opportunity</h3><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Create a deal record and carry the lead into the sales pipeline.</p></div>
+              {conversionError ? <p role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{conversionError}</p> : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input label="Estimated deal value (INR)" type="number" value={conversion.opportunityValue} onChange={(value) => setConversion({ ...conversion, opportunityValue: value })} required />
+                <Input label="Expected start date" type="date" value={conversion.expectedStartDate} onChange={(value) => setConversion({ ...conversion, expectedStartDate: value })} />
+                <Filter label="Service" value={conversion.service} onChange={(value) => setConversion({ ...conversion, service: value })} options={["SMS", "WHATSAPP"]} render={titleCase} />
+                <Input label="Estimated monthly volume" type="number" value={conversion.expectedMonthlyVolume} onChange={(value) => setConversion({ ...conversion, expectedMonthlyVolume: value })} />
+                <div className="sm:col-span-2"><Textarea label="Requirement summary" value={conversion.notes} onChange={(value) => setConversion({ ...conversion, notes: value })} /></div>
+              </div>
+              <div className="mt-3 flex justify-end gap-2">
+                <button type="button" onClick={() => setShowConvertForm(false)} className={secondaryBtnClass}>Cancel</button>
+                <button disabled={converting || !conversion.opportunityValue} className={primaryBtnClass}>{converting ? "Creating opportunity..." : "Create opportunity"}</button>
+              </div>
+            </form>
+          ) : null}
         </div>
         <div className="grid gap-4 p-5 xl:grid-cols-[1fr_360px]">
           <div className="space-y-4">
             <Card><h3 className="font-semibold">Contact Information</h3><div className="mt-3 grid gap-3 sm:grid-cols-2">{[["Email", lead.email], ["Phone", lead.phone], ["Company", lead.company], ["Designation", lead.designation], ["Location", lead.city], ["Source", lead.source]].map(([k, v]) => <Info key={k} label={k} value={v || "Not set"} />)}</div></Card>
-            <Card><h3 className="font-semibold">AI Summary <span className="text-xs font-normal text-slate-500 dark:text-slate-400">(mock)</span></h3><p className="mt-3 text-sm leading-6 text-slate-700 dark:text-slate-200">{ai?.summary}</p><div className="mt-4 grid gap-2 sm:grid-cols-2">{["intent", "sentiment", "requirement", "objections", "buyingTimeline", "recommendedNextAction"].map((key) => <Info key={key} label={titleCase(key)} value={ai?.[key] ?? "Run analysis"} />)}</div></Card>
+            <Card>
+              <h3 className="font-semibold">AI Summary <span className="text-xs font-normal text-slate-500 dark:text-slate-400">(live insight)</span></h3>
+              <p className="mt-3 text-sm leading-6 text-slate-700 dark:text-slate-200">{ai?.summary}</p>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <Info label="Customer intent" value={ai?.customerIntent ?? ai?.intent ?? "Run analysis"} />
+                <Info label="Sentiment" value={ai?.sentiment ?? "Available after analysis"} />
+                <Info label="Key requirement" value={ai?.keyRequirements ?? ai?.requirement ?? "Not captured"} />
+                <Info label="Objection" value={ai?.objections ?? "None captured"} />
+                <Info label="Buying timeline" value={ai?.buyingTimeline ?? "Needs review"} />
+                <Info label="Next best action" value={ai?.nextBestAction ?? ai?.recommendedNextAction ?? "Review lead"} />
+              </div>
+            </Card>
             <Card><h3 className="font-semibold">Timeline</h3><div className="mt-3 space-y-3">{lead.activities?.map((activity: Activity) => { const tone = activityConversationTone(activity); const borderClass = tone === "green" ? "border-emerald-400 dark:border-emerald-600" : tone === "red" ? "border-red-400 dark:border-red-600" : "border-brand-100"; return <div key={activity.id} className={`border-l-2 ${borderClass} pl-3`}><div className="text-sm font-semibold">{titleCase(activity.activityType)}</div><div className="text-sm text-slate-600 dark:text-slate-300">{activity.description}</div><div className="text-xs text-slate-400 dark:text-slate-500">{dateLabel(activity.createdAt)} · {activity.user?.name ?? "System"}</div></div>; })}</div></Card>
             <Card><h3 className="font-semibold">Means of Conversation</h3><div className="mt-3 space-y-2">{lead.calls?.map((call: Call) => { const tone = conversationTone(call); const toneClass = conversationCardClass(tone); if (call.type === "MESSAGE") return <div key={call.id} className={`rounded-xl border p-3 transition-colors ${toneClass}`}><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold"><MessageSquare size={14} /> Message · {call.direction === "INBOUND" ? "Received" : "Sent"}</span><Badge tone={tone}>Logged</Badge></div><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{call.content || "No content"}</p><p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{dateLabel(call.createdAt)} · {call.agent?.name}</p></div>; if (call.type === "EMAIL") return <div key={call.id} className={`rounded-xl border p-3 transition-colors ${toneClass}`}><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold"><Mail size={14} /> Email · {call.direction === "INBOUND" ? "Received" : "Sent"}{call.outcome ? ` · ${call.outcome}` : ""}</span><Badge tone={tone}>Logged</Badge></div><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{call.content || "No content"}</p><p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{dateLabel(call.createdAt)} · {call.agent?.name}</p></div>; return <div key={call.id} className={`rounded-xl border p-3 transition-colors ${toneClass}`}><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold"><Phone size={14} /> {call.outcome}</span><div className="flex items-center gap-2"><Badge tone={tone}>{call.status ? titleCase(call.status) : "Logged"}</Badge><span className="text-sm text-slate-500 dark:text-slate-400">{call.duration} min</span></div></div><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{call.notes || "No notes"}</p><p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{dateLabel(call.createdAt)} · {call.agent?.name}</p></div>; })}</div></Card>
           </div>
           <div className="space-y-4">
-            <Card><h3 className="font-semibold">Lead Score</h3><div className="mt-3 text-4xl font-semibold text-ink">{lead.score}/100</div><p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{lead.score >= 75 ? "Hot Lead" : lead.score >= 45 ? "Warm Lead" : "Cold Lead"}</p><ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-600 dark:text-slate-300"><li>Requested callback +20</li><li>Confirmed requirement +15</li><li>Responded to follow-up +8</li><li>Good contact details +5</li></ul></Card>
+            <Card>
+              <h3 className="font-semibold">Lead Score</h3>
+              <div className="mt-3 text-4xl font-semibold text-ink">{lead.score}/100</div>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{lead.scoreMeta?.classification ?? (lead.score >= 75 ? "Hot Lead" : lead.score >= 45 ? "Warm Lead" : "Cold Lead")}</p>
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"><span>Positive factors</span><span>{lead.scoreMeta?.breakdown.filter((item) => item.delta > 0).reduce((sum, item) => sum + item.delta, 0) ?? lead.score}</span></div>
+                {lead.scoreMeta?.breakdown.filter((item) => item.delta > 0).slice(0, 4).map((item) => (
+                  <div key={`${item.factor}-${item.delta}`} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-500/10 dark:text-emerald-300">
+                    <div className="flex items-center justify-between gap-2"><span className="font-semibold">{item.factor}</span><span>+{item.delta}</span></div>
+                    <p className="mt-1 text-[11px] opacity-90">{item.note}</p>
+                  </div>
+                )) ?? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-500/10 dark:text-emerald-300">Requested callback +20</div>
+                )}
+              </div>
+              {lead.scoreMeta?.breakdown.some((item) => item.delta < 0) ? (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Negative factors</div>
+                  {lead.scoreMeta.breakdown.filter((item) => item.delta < 0).map((item) => (
+                    <div key={`${item.factor}-${item.delta}`} className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-500/10 dark:text-red-300">
+                      <div className="flex items-center justify-between gap-2"><span className="font-semibold">{item.factor}</span><span>{item.delta}</span></div>
+                      <p className="mt-1 text-[11px] opacity-90">{item.note}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </Card>
             <Card>
               <h3 className="font-semibold">Log Conversation</h3>
               <form onSubmit={logCall} className="mt-3 space-y-3">
@@ -810,15 +1141,15 @@ function CreateCampaignModal({ form, setForm, onClose, onSubmit, busy }: any) {
 }
 
 function Title({ title, subtitle, action }: any) {
-  return <div className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-semibold tracking-tight text-ink">{title}</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p></div>{action}</div>;
+  return <div className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-[28px] font-semibold tracking-[-0.04em] text-ink">{title}</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p></div>{action}</div>;
 }
 
 const fieldClass =
-  "mt-2 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink outline-none transition-shadow duration-150 placeholder:text-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15";
+  "mt-2 w-full rounded-xl border border-line bg-panel px-3 text-sm text-ink outline-none transition-shadow duration-150 placeholder:text-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/12";
 
 const primaryBtnClass =
-  "rounded-xl bg-gradient-to-b from-brand-500 to-brand-600 px-3.5 py-2 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:opacity-60 disabled:hover:brightness-100";
-const secondaryBtnClass = "rounded-xl border border-line px-3.5 py-2 text-sm font-semibold text-ink transition-colors duration-150 hover:bg-panel";
+  "rounded-xl bg-gradient-to-r from-brand-600 to-brand-500 px-3.5 py-2 text-sm font-semibold text-white shadow-glow transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:opacity-60 disabled:hover:brightness-100";
+const secondaryBtnClass = "rounded-xl border border-line bg-surface px-3.5 py-2 text-sm font-semibold text-ink transition-colors duration-150 hover:bg-panel";
 
 function Input({ label, value, onChange, type = "text", required = false }: any) {
   return <label className="block"><span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{label}</span><input required={required} type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} className={`h-10 ${fieldClass}`} /></label>;

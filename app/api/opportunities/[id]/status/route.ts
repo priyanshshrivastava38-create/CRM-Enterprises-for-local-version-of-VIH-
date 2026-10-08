@@ -3,11 +3,12 @@ import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { opportunityStatusSchema } from "@/lib/validators";
 import { errorResponse, ApiError } from "@/lib/api-error";
+import { canManageDeals } from "@/lib/rbac";
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "SALES" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canManageDeals(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
 

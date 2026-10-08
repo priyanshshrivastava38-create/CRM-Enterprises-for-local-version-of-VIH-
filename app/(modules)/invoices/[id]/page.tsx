@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { Card, Badge, Title, Input, Info, Empty, LoadingGrid, primaryBtnClass, secondaryBtnClass } from "@/components/shared/ui";
 import { dateLabel, titleCase } from "@/lib/format";
+import { DateField } from "@/components/shared/DateField";
 
 type LineItem = { id: string; lineType: string; service?: string | null; component?: string | null; description: string; quantity?: number | null; rate?: number | null; amount: number };
 type Payment = { id: string; amount: number; paidOn: string; method?: string | null; reference?: string | null; recordedBy?: { name: string } };
@@ -164,7 +165,7 @@ export default function InvoiceDetailPage() {
                 {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-400">{error}</p> : null}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Input label="Amount (₹)" type="number" value={paymentForm.amount} onChange={(v) => setPaymentForm({ ...paymentForm, amount: v })} required />
-                  <Input label="Paid On" type="date" value={paymentForm.paidOn} onChange={(v) => setPaymentForm({ ...paymentForm, paidOn: v })} required />
+                  <DateField label="Paid On" mode="date" value={paymentForm.paidOn} onChange={(v) => setPaymentForm({ ...paymentForm, paidOn: v })} required />
                   <Input label="Method" value={paymentForm.method} onChange={(v) => setPaymentForm({ ...paymentForm, method: v })} placeholder="e.g. NEFT" />
                   <Input label="Reference" value={paymentForm.reference} onChange={(v) => setPaymentForm({ ...paymentForm, reference: v })} />
                 </div>

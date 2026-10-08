@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
-  title: "ViH Metaverse CRM",
-  description: "Internal lead management CRM POC"
+  title: "FinFlow CRM | Finance & Sales Intelligence Platform",
+  description: "Finance and sales intelligence for the complete customer revenue lifecycle."
 };
 
 const themeInitScript = `(function () {

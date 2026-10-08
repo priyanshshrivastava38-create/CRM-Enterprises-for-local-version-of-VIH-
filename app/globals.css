@@ -4,30 +4,35 @@
 
 :root {
   color-scheme: light;
-  --app-bg: #f3f6fb;
-  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(53, 99, 217, 0.08), transparent 58%),
-    radial-gradient(900px 500px at 100% 0%, rgba(18, 31, 58, 0.04), transparent 55%);
+  --app-bg: #f4f7f3;
+  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(22, 128, 91, 0.09), transparent 58%),
+    radial-gradient(900px 500px at 100% 0%, rgba(190, 143, 60, 0.055), transparent 55%);
   --surface: #ffffff;
-  --panel: #f6f8fc;
-  --ink: #111827;
-  --line: #e5eaf3;
-  --scrollbar-thumb: #b8c4d8;
-  --chart-grid: #e7ecf4;
-  --chart-text: #64748b;
+  --panel: #f2f6f1;
+  --ink: #17221c;
+  --line: #e1e9e1;
+  --scrollbar-thumb: #b8c9bd;
+  --chart-grid: #e4ebe3;
+  --chart-text: #68766d;
+  /* Validated chart series (brand green + existing chart blue): CVD-safe and >= 3:1 on --surface. */
+  --series-1: #16805b;
+  --series-2: #2a78d6;
 }
 
 :root.dark {
   color-scheme: dark;
-  --app-bg: #0b1220;
-  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(91, 135, 246, 0.12), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(17, 24, 39, 0.16), transparent 55%);
-  --surface: #111a2b;
-  --panel: #162133;
-  --ink: #edf4ff;
-  --line: #243149;
-  --scrollbar-thumb: #40506d;
-  --chart-grid: #243149;
-  --chart-text: #9aa9c3;
+  --app-bg: #101713;
+  --app-bg-glow: radial-gradient(1200px 600px at 12% -10%, rgba(40, 160, 111, 0.13), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(190, 143, 60, 0.055), transparent 55%);
+  --surface: #171f1a;
+  --panel: #1d2821;
+  --ink: #edf4ee;
+  --line: #2b3930;
+  --scrollbar-thumb: #506457;
+  --chart-grid: #2b3930;
+  --chart-text: #a3b2a7;
+  --series-1: #48aa7e;
+  --series-2: #3987e5;
 }
 
 * {
@@ -36,10 +41,14 @@
 
 html {
   font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--app-bg);
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
   background: var(--app-bg);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -58,14 +67,41 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+}
+
 ::selection {
-  background: rgba(54, 103, 240, 0.25);
+  background: rgba(22, 128, 91, 0.24);
 }
 
 :focus-visible {
-  outline: 2px solid rgba(54, 103, 240, 0.55);
+  outline: 2px solid rgba(22, 128, 91, 0.58);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Text fields draw their own border/ring focus state; skip the global outline so it doesn't double up. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+input[type="search"]::-webkit-search-cancel-button {
+  cursor: pointer;
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .bg-app-glow {
@@ -93,5 +129,30 @@ button {
   }
   to {
     background-position: 400px 0;
+  }
+}
+
+/* Printable reports (Executive Summary / Finance "Download PDF"): app chrome is hidden via print:hidden. */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+  /* Scaling to 80% keeps printed columns at least as wide as on screen, so charts sized for the screen still fit. */
+  html {
+    zoom: 0.8;
+  }
+  html,
+  body,
+  .bg-app-glow {
+    background: #ffffff !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    box-shadow: none !important;
+  }
+  section {
+    break-inside: avoid;
   }
 }

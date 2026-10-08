@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { opportunityDocumentSchema } from "@/lib/validators";
 import { errorResponse } from "@/lib/api-error";
+import { canManageDeals } from "@/lib/rbac";
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
@@ -15,7 +16,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "SALES" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canManageDeals(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
 

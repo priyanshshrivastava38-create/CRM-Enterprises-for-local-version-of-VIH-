@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { opportunitySchema } from "@/lib/validators";
 import { errorResponse, ApiError } from "@/lib/api-error";
+import { canManageDeals } from "@/lib/rbac";
 
 const allowedRoles = ["SALES", "CEO", "ADMIN"];
 
@@ -37,7 +38,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "SALES" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canManageDeals(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
 
@@ -70,7 +71,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "SALES" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canManageDeals(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
   const current = await prisma.opportunity.findFirst({ where: { id, deletedAt: null } });

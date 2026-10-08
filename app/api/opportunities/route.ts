@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { opportunitySchema } from "@/lib/validators";
 import { errorResponse } from "@/lib/api-error";
+import { canManageDeals } from "@/lib/rbac";
 
 const allowedRoles = ["SALES", "CEO", "ADMIN"];
 
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "SALES" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canManageDeals(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
     const input = opportunitySchema.parse(await request.json());

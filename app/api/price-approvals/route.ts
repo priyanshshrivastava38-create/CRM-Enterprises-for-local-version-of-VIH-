@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { priceApprovalRequestSchema } from "@/lib/validators";
 import { errorResponse, ApiError } from "@/lib/api-error";
 import { nextRequestNumber } from "@/lib/numbering";
+import { canManageDeals } from "@/lib/rbac";
 
 const allowedRoles = ["SALES", "CEO", "FINANCE", "ADMIN"];
 
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "SALES" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canManageDeals(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
     const input = priceApprovalRequestSchema.parse(await request.json());

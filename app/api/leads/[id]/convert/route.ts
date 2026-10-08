@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { opportunityRequirementSchema } from "@/lib/validators";
 import { errorResponse, ApiError } from "@/lib/api-error";
+import { canManageDeals } from "@/lib/rbac";
 
 const convertSchema = z.object({
   opportunityValue: z.coerce.number().min(0),
@@ -14,7 +15,7 @@ const convertSchema = z.object({
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "SALES" && user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!canManageDeals(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
 
