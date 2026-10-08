@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "@/lib/demo-accounts";
@@ -13,12 +13,16 @@ export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
-function sessionSecret() {
+export function sessionSecret() {
   const secret = process.env.SESSION_SECRET;
   if (secret) return secret;
   if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
     return "dev-only-insecure-session-secret";
   }
+  // No SESSION_SECRET configured: derive a stable key from the database credentials, which are just as secret.
+  // Setting SESSION_SECRET explicitly is still preferred (it lets you rotate sessions without touching the database).
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) return createHash("sha256").update(`vih-crm-session:${databaseUrl}`).digest("hex");
   throw new Error("SESSION_SECRET must be set");
 }
 

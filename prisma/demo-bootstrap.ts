@@ -1,9 +1,20 @@
 // Runs during Vercel builds. In demo mode (NEXT_PUBLIC_DEMO_MODE=true) an EMPTY database is filled with the demo
 // data from prisma/seed.ts. A database that already has users is never touched, so redeploys keep any changes.
+import { readFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
 
+/** Demo mode comes from the environment, or from the committed .env.production (which build scripts don't load). */
+function demoModeOn() {
+  if (process.env.NEXT_PUBLIC_DEMO_MODE) return process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+  try {
+    return /^\s*NEXT_PUBLIC_DEMO_MODE\s*=\s*"?true"?\s*$/m.test(readFileSync(".env.production", "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
-  if (process.env.NEXT_PUBLIC_DEMO_MODE !== "true") {
+  if (!demoModeOn()) {
     console.log("demo-bootstrap: demo mode is off; skipping demo data.");
     return;
   }

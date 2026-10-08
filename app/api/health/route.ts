@@ -22,6 +22,8 @@ export async function GET() {
   const checks = {
     databaseUrlSet: Boolean(process.env.DATABASE_URL),
     sessionSecretSet: Boolean(process.env.SESSION_SECRET),
+    // Without SESSION_SECRET the app derives a key from DATABASE_URL (see lib/auth.ts), so sign-in still works.
+    sessionSecretDerived: !process.env.SESSION_SECRET && Boolean(process.env.DATABASE_URL),
     database: "ok" as DatabaseState,
     hasUsers: false
   };
@@ -36,6 +38,6 @@ export async function GET() {
     }
   }
 
-  const healthy = checks.database === "ok" && checks.sessionSecretSet && checks.hasUsers;
+  const healthy = checks.database === "ok" && (checks.sessionSecretSet || checks.sessionSecretDerived) && checks.hasUsers;
   return NextResponse.json({ status: healthy ? "ok" : "needs-attention", checks }, { status: healthy ? 200 : 503, headers: { "Cache-Control": "no-store" } });
 }

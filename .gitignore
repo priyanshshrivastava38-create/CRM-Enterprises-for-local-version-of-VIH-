@@ -3,6 +3,8 @@ node_modules
 .env
 .env.*
 !.env.example
+# Committed on purpose: holds only the public demo-mode flag, never secrets.
+!.env.production
 local-backups/
 dist
 coverage
